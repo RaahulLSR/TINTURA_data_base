@@ -107,6 +107,9 @@ export interface Style {
   created_at?: string;
   garment_type?: string;
   demographic?: string;
+  available_colors?: string[];
+  available_sizes?: string[];
+  size_type?: 'letter' | 'number';
 }
 
 export interface StyleTemplate {

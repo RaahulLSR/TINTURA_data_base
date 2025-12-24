@@ -2,9 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import { fetchStyles, upsertStyle, fetchStyleTemplate, updateStyleTemplate, deleteStyle, uploadOrderAttachment } from '../services/db';
 import { Style, StyleTemplate, StyleCategory, TechPackItem, Attachment } from '../types';
-// Added BookOpen to the list of imports from lucide-react
 import { 
-  Plus, Search, Grid, List, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, ChevronRight, ChevronDown, PlusCircle, Settings, ArrowRight, ArrowLeftRight, Loader2, Download, Eye, Layers, Box, BookOpen, UserPlus
+  Plus, Search, Grid, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, Settings, ArrowLeftRight, Loader2, Download, Layers, BookOpen, Palette, Ruler
 } from 'lucide-react';
 
 // --- Sub-components moved outside to prevent focus loss ---
@@ -25,79 +24,178 @@ const CategoryEditor: React.FC<CategoryEditorProps> = ({
   if (!isEditing) return null;
   
   const isPackingReq = category.name.toLowerCase().includes('packing');
+  const isPreProduction = category.name.toLowerCase().includes('pre production');
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm mb-6">
-      <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center gap-2">
-        <Layers size={18} className="text-indigo-600"/>
-        <h4 className="font-black text-slate-700 text-xs uppercase tracking-widest">{category.name}</h4>
+      <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Layers size={18} className="text-indigo-600"/>
+          <h4 className="font-black text-slate-700 text-xs uppercase tracking-widest">{category.name}</h4>
+        </div>
       </div>
-      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Inject Packing Type and Pcs/Box if this is the Packing category */}
-        {isPackingReq && (
-          <>
-            <div className="space-y-3">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Type of Packing</label>
-              <select 
-                className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer" 
-                value={isEditing.packing_type} 
-                onChange={e => setIsEditing({...isEditing, packing_type: e.target.value})}
-              >
-                <option value="pouch">Pouch</option>
-                <option value="cover">Cover</option>
-                <option value="box">Box</option>
-              </select>
-            </div>
-            <div className="space-y-3">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">No of pieces / Box</label>
-              <input 
-                type="number" 
-                className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-black focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm" 
-                value={isEditing.pcs_per_box} 
-                onChange={e => setIsEditing({...isEditing, pcs_per_box: parseInt(e.target.value) || 0})}
-              />
-            </div>
-          </>
-        )}
-
-        {category.fields.map(field => {
-          const data = isEditing.tech_pack[category.name]?.[field] || { text: '', attachments: [] };
-          return (
-            <div key={field} className="space-y-3">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{field}</label>
-              <div className="relative group">
-                <textarea 
-                  className="w-full border-2 border-slate-100 rounded-xl p-4 text-sm font-medium focus:border-indigo-500 outline-none min-h-[100px] bg-slate-50/50 focus:bg-white transition-all text-black"
-                  value={data.text}
-                  placeholder={`Enter ${field.toLowerCase()} details...`}
-                  onChange={e => {
-                    const updated = { ...isEditing };
-                    if (!updated.tech_pack[category.name]) updated.tech_pack[category.name] = {};
-                    updated.tech_pack[category.name][field] = { ...data, text: e.target.value };
-                    setIsEditing(updated);
-                  }}
-                />
+      
+      <div className="p-6 space-y-8">
+        {/* INJECT BLUEPRINT COLOURS & SIZES IF PRE-PRODUCTION */}
+        {isPreProduction && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-6 bg-slate-50/50 rounded-2xl border border-slate-100 shadow-inner mb-4">
+            {/* Colours Input: 1-Column Table */}
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2 mb-4">
+                <Palette size={16} className="text-indigo-600"/>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Blueprint Colours</label>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {data.attachments.map((att, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700">
-                    {att.type === 'image' ? <ImageIcon size={14}/> : <FileText size={14}/>}
-                    <span className="truncate max-w-[100px]">{att.name}</span>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-2 scrollbar-hide">
+                {(isEditing.available_colors || ['']).map((color, idx) => (
+                  <div key={idx} className="flex gap-2 group">
+                    <input 
+                      className="flex-1 border-2 border-slate-200 rounded-xl p-3 bg-white text-slate-900 font-bold focus:border-indigo-500 outline-none transition-all text-sm"
+                      placeholder="Type colour..."
+                      value={color}
+                      onChange={e => {
+                        const newCols = [...(isEditing.available_colors || [])];
+                        newCols[idx] = e.target.value;
+                        setIsEditing({...isEditing, available_colors: newCols});
+                      }}
+                    />
                     <button type="button" onClick={() => {
-                      const updated = { ...isEditing };
-                      updated.tech_pack[category.name][field].attachments.splice(idx, 1);
-                      setIsEditing(updated);
-                    }} className="hover:text-red-500"><X size={14}/></button>
+                      const newCols = (isEditing.available_colors || []).filter((_, i) => i !== idx);
+                      setIsEditing({...isEditing, available_colors: newCols.length > 0 ? newCols : ['']});
+                    }} className="p-3 text-slate-300 hover:text-red-500 transition-colors">
+                      <Trash2 size={16}/>
+                    </button>
                   </div>
                 ))}
-                <label className="bg-white border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2">
-                  <Plus size={14}/> Add File
-                  <input type="file" multiple className="hidden" onChange={e => handleFileUpload(category.name, field, e.target.files)}/>
-                </label>
               </div>
+              <button 
+                type="button" 
+                onClick={() => setIsEditing({...isEditing, available_colors: [...(isEditing.available_colors || []), '']})} 
+                className="w-full mt-4 py-2.5 border-2 border-dashed border-indigo-200 text-indigo-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-white hover:border-indigo-300 transition-all flex items-center justify-center gap-2"
+              >
+                <Plus size={14}/> Add Colour Row
+              </button>
             </div>
-          );
-        })}
+
+            {/* Sizes Input: Toggle Type + Badge Management */}
+            <div className="flex flex-col">
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-2">
+                  <Ruler size={16} className="text-indigo-600"/>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Size variants</label>
+                </div>
+                <div className="flex bg-slate-200 p-1 rounded-lg">
+                  <button 
+                    type="button" 
+                    onClick={() => setIsEditing({...isEditing, size_type: 'letter', available_sizes: ['S', 'M', 'L', 'XL', 'XXL', 'XXXL']})} 
+                    className={`px-3 py-1 rounded-md text-[9px] font-black uppercase transition-all ${isEditing.size_type === 'letter' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+                  >
+                    ABC
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsEditing({...isEditing, size_type: 'number', available_sizes: ['65', '70', '75', '80', '85', '90']})} 
+                    className={`px-3 py-1 rounded-md text-[9px] font-black uppercase transition-all ${isEditing.size_type === 'number' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+                  >
+                    123
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex-1 flex flex-wrap content-start gap-2 p-3 bg-white rounded-xl border border-slate-200 min-h-[100px]">
+                {isEditing.available_sizes?.map((sz, idx) => (
+                  <div key={idx} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-2 shadow-sm">
+                    {sz}
+                    <button type="button" onClick={() => {
+                      const newSizes = isEditing.available_sizes?.filter((_, i) => i !== idx);
+                      setIsEditing({...isEditing, available_sizes: newSizes});
+                    }} className="text-white/50 hover:text-white transition-colors">
+                      <X size={12}/>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              
+              <button 
+                type="button" 
+                onClick={() => {
+                  const newVal = prompt(`Enter new ${isEditing.size_type === 'letter' ? 'Letter' : 'Number'} size:`);
+                  if (newVal) setIsEditing({...isEditing, available_sizes: [...(isEditing.available_sizes || []), newVal]});
+                }} 
+                className="w-full mt-4 py-2.5 border-2 border-dashed border-indigo-200 text-indigo-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-white hover:border-indigo-300 transition-all flex items-center justify-center gap-2"
+              >
+                <Plus size={14}/> Add custom size
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          {/* Inject Packing Type and Pcs/Box if this is the Packing category */}
+          {isPackingReq && (
+            <>
+              <div className="space-y-3">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Type of Packing</label>
+                <select 
+                  className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer" 
+                  value={isEditing.packing_type} 
+                  onChange={e => setIsEditing({...isEditing, packing_type: e.target.value})}
+                >
+                  <option value="pouch">Pouch</option>
+                  <option value="cover">Cover</option>
+                  <option value="box">Box</option>
+                </select>
+              </div>
+              <div className="space-y-3">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">No of pieces / Box</label>
+                <input 
+                  type="number" 
+                  className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-black focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm" 
+                  value={isEditing.pcs_per_box} 
+                  onChange={e => setIsEditing({...isEditing, pcs_per_box: parseInt(e.target.value) || 0})}
+                />
+              </div>
+            </>
+          )}
+
+          {category.fields.map(field => {
+            const data = isEditing.tech_pack[category.name]?.[field] || { text: '', attachments: [] };
+            return (
+              <div key={field} className="space-y-3">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{field}</label>
+                <div className="relative group">
+                  <textarea 
+                    className="w-full border-2 border-slate-100 rounded-xl p-4 text-sm font-medium focus:border-indigo-500 outline-none min-h-[100px] bg-slate-50/50 focus:bg-white transition-all text-black"
+                    value={data.text}
+                    placeholder={`Enter ${field.toLowerCase()} details...`}
+                    onChange={e => {
+                      const updated = { ...isEditing };
+                      if (!updated.tech_pack[category.name]) updated.tech_pack[category.name] = {};
+                      updated.tech_pack[category.name][field] = { ...data, text: e.target.value };
+                      setIsEditing(updated);
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {data.attachments.map((att, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700">
+                      {att.type === 'image' ? <ImageIcon size={14}/> : <FileText size={14}/>}
+                      <span className="truncate max-w-[100px]">{att.name}</span>
+                      <button type="button" onClick={() => {
+                        const updated = { ...isEditing };
+                        updated.tech_pack[category.name][field].attachments.splice(idx, 1);
+                        setIsEditing(updated);
+                      }} className="hover:text-red-500"><X size={14}/></button>
+                    </div>
+                  ))}
+                  <label className="bg-white border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2">
+                    <Plus size={14}/> Add File
+                    <input type="file" multiple className="hidden" onChange={e => handleFileUpload(category.name, field, e.target.files)}/>
+                  </label>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -125,7 +223,6 @@ export const StyleDatabase: React.FC = () => {
     setStyles(s);
     setTemplate(t);
 
-    // Collect existing garment types and demographics to populate lists
     const existingGarments = Array.from(new Set([...garmentTypeOptions, ...s.map(style => style.garment_type).filter(Boolean) as string[]]));
     const existingDemos = Array.from(new Set([...demographicOptions, ...s.map(style => style.demographic).filter(Boolean) as string[]]));
     setGarmentTypeOptions(existingGarments);
@@ -174,7 +271,10 @@ export const StyleDatabase: React.FC = () => {
         pcs_per_box: source.pcs_per_box,
         style_text: source.style_text,
         garment_type: source.garment_type,
-        demographic: source.demographic
+        demographic: source.demographic,
+        available_colors: source.available_colors ? [...source.available_colors] : [],
+        available_sizes: source.available_sizes ? [...source.available_sizes] : [],
+        size_type: source.size_type
       });
     }
   };
@@ -232,6 +332,15 @@ export const StyleDatabase: React.FC = () => {
     if (!win) return;
     
     const categoriesHtml = template?.config.filter(c => c.name !== "General Info").map(cat => {
+      const isPreProd = cat.name.toLowerCase().includes('pre production');
+      
+      const variantMetaHtml = isPreProd ? `
+        <div style="background:#f9f9f9; border:1px solid #eee; padding:15px; border-radius:4px; margin-bottom:20px; display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+           <div><span style="font-size:10px; font-weight:bold; color:#888; text-transform:uppercase;">Blueprint Colours</span><br/><strong>${style.available_colors?.join(', ') || '---'}</strong></div>
+           <div><span style="font-size:10px; font-weight:bold; color:#888; text-transform:uppercase;">Size Breakdown</span><br/><strong>${style.available_sizes?.join(', ') || '---'} (${style.size_type})</strong></div>
+        </div>
+      ` : '';
+
       const fields = cat.fields.map(f => {
         const data = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
         const imagesHtml = data.attachments.filter(a => a.type === 'image').map(img => `
@@ -261,6 +370,7 @@ export const StyleDatabase: React.FC = () => {
         <div style="margin-top:40px;">
           <h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name}</h3>
           <div style="padding:10px;">
+            ${variantMetaHtml}
             ${extraMetaHtml}
             ${fields}
           </div>
@@ -308,7 +418,7 @@ export const StyleDatabase: React.FC = () => {
             <button onClick={() => setViewMode('compare')} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'compare' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><ArrowLeftRight size={18}/> Compare</button>
           </div>
           <button onClick={() => setIsConfigOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all"><Settings size={20}/></button>
-          <button onClick={() => setIsEditing({ id: '', style_number: '', category: 'Casuals', packing_type: 'pouch', pcs_per_box: 0, style_text: '', garment_type: 'T-shirt', demographic: 'Men', tech_pack: {} })} className="bg-indigo-600 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"><Plus size={20}/> New Style</button>
+          <button onClick={() => setIsEditing({ id: '', style_number: '', category: 'Casuals', packing_type: 'pouch', pcs_per_box: 0, style_text: '', garment_type: 'T-shirt', demographic: 'Men', available_colors: [''], available_sizes: ['S', 'M', 'L', 'XL', 'XXL', 'XXXL'], size_type: 'letter', tech_pack: {} })} className="bg-indigo-600 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"><Plus size={20}/> New Style</button>
         </div>
       </div>
 
@@ -341,6 +451,11 @@ export const StyleDatabase: React.FC = () => {
                 <h3 className="text-2xl font-black text-slate-800 tracking-tight mb-2">{style.style_number}</h3>
                 <p className="text-slate-500 text-xs font-medium line-clamp-2 leading-relaxed">{style.style_text || 'No description provided.'}</p>
                 
+                <div className="mt-4 flex flex-wrap gap-1">
+                   {style.available_sizes?.slice(0, 5).map(s => <span key={s} className="px-1.5 py-0.5 bg-slate-100 text-[10px] font-bold rounded text-slate-600">{s}</span>)}
+                   {(style.available_sizes?.length || 0) > 5 && <span className="text-[10px] text-slate-400">+{style.available_sizes!.length - 5} more</span>}
+                </div>
+
                 <div className="mt-6 flex items-center gap-4">
                   <div className="flex -space-x-2">
                      {Object.values(style.tech_pack).flatMap(cat => Object.values(cat)).flatMap(item => item.attachments).slice(0, 4).map((att, i) => (
@@ -406,7 +521,13 @@ export const StyleDatabase: React.FC = () => {
                    </div>
                    <div className="p-6 space-y-8 overflow-y-auto">
                       <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
-                        <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Style Text / Description</div>
+                        <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Variants</div>
+                        <div className="text-xs font-bold text-slate-700 mb-1">Colors: {style.available_colors?.join(', ') || '---'}</div>
+                        <div className="text-xs font-bold text-slate-700">Sizes: {style.available_sizes?.join(', ') || '---'}</div>
+                      </div>
+
+                      <div className="p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
+                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Style Text / Description</div>
                         <div className="text-sm font-medium text-slate-700 leading-relaxed whitespace-pre-wrap">{style.style_text || '---'}</div>
                       </div>
 
@@ -478,7 +599,7 @@ export const StyleDatabase: React.FC = () => {
             </div>
             
             <form onSubmit={handleSaveStyle} className="flex-1 overflow-y-auto p-8 bg-slate-50/30">
-              {/* Header Grid: Restructured for new inputs */}
+              {/* Header Grid: Identity */}
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-10">
                  <div className="col-span-1">
                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Style Number</label>
@@ -539,7 +660,7 @@ export const StyleDatabase: React.FC = () => {
                 </select>
               </div>
 
-              {/* Technical breakdown sections */}
+              {/* Technical breakdown sections (Loop includes Colors/Sizes inside Pre-Prod) */}
               {template?.config.filter(cat => cat.name !== "General Info").map(cat => (
                 <CategoryEditor 
                   key={cat.name} 
@@ -589,11 +710,6 @@ export const StyleDatabase: React.FC = () => {
                         setTemplate({ ...template, config: newConfig });
                       }}
                     />
-                    <button onClick={() => {
-                      if (!template) return;
-                      const newConfig = template.config.filter((_, i) => i !== catIdx);
-                      setTemplate({ ...template, config: newConfig });
-                    }} className="text-red-300 hover:text-red-500"><Trash2 size={18}/></button>
                   </div>
                   <div className="space-y-2">
                     {cat.fields.map((field, fieldIdx) => (
@@ -608,12 +724,6 @@ export const StyleDatabase: React.FC = () => {
                             setTemplate({ ...template, config: newConfig });
                           }}
                         />
-                        <button onClick={() => {
-                          if (!template) return;
-                          const newConfig = [...template.config];
-                          newConfig[catIdx].fields.splice(fieldIdx, 1);
-                          setTemplate({ ...template, config: newConfig });
-                        }} className="p-2 text-slate-300 hover:text-red-500"><X size={16}/></button>
                       </div>
                     ))}
                     <button 
