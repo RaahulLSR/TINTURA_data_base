@@ -2,8 +2,9 @@
 import React, { useEffect, useState } from 'react';
 import { fetchStyles, upsertStyle, fetchStyleTemplate, updateStyleTemplate, deleteStyle, uploadOrderAttachment } from '../services/db';
 import { Style, StyleTemplate, StyleCategory, TechPackItem, Attachment } from '../types';
+// Added ChevronRight to the imports from lucide-react
 import { 
-  Plus, Search, Grid, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, Settings, ArrowLeftRight, Loader2, Download, Layers, BookOpen, Palette, Ruler
+  Plus, Search, Grid, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, Settings, ArrowLeftRight, Loader2, Download, Layers, BookOpen, Palette, Ruler, ChevronDown, ChevronUp, ChevronRight, Info, ArrowLeft, ExternalLink
 } from 'lucide-react';
 
 // --- Sub-components moved outside to prevent focus loss ---
@@ -201,6 +202,145 @@ const CategoryEditor: React.FC<CategoryEditorProps> = ({
   );
 };
 
+// --- Full View Component ---
+
+const StyleFullView: React.FC<{ style: Style, template: StyleTemplate | null, onBack: () => void, onPrint: () => void, onEdit: () => void }> = ({ style, template, onBack, onPrint, onEdit }) => {
+  return (
+    <div className="bg-white min-h-screen animate-fade-in -m-8 p-8">
+      {/* Top Floating Navigation */}
+      <div className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 -mx-8 px-8 py-4 flex items-center justify-between mb-8">
+        <div className="flex items-center gap-6">
+          <button onClick={onBack} className="p-2.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all flex items-center gap-2 font-bold">
+            <ArrowLeft size={20}/> Catalog
+          </button>
+          <div className="h-6 w-px bg-slate-200"></div>
+          <div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">{style.style_number}</h1>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{style.category} • {style.garment_type} ({style.demographic})</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={onEdit} className="flex items-center gap-2 px-6 py-2.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl font-bold transition-all"><Edit3 size={18}/> Edit Blueprint</button>
+          <button onClick={onPrint} className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl font-black shadow-lg shadow-indigo-100 transition-all"><Printer size={18}/> Generate Tech-Pack PDF</button>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto space-y-12">
+        {/* Meta Info Bar */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2"><Palette size={12}/> Variant Colors</label>
+            <div className="flex flex-wrap gap-2 mt-3">
+               {style.available_colors?.filter(c => c).map((c, i) => (
+                 <span key={i} className="px-3 py-1 bg-white border border-slate-200 text-xs font-bold rounded-lg text-slate-700 shadow-sm">{c}</span>
+               )) || <span className="text-xs text-slate-300 italic">No colors defined</span>}
+            </div>
+          </div>
+          <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2"><Ruler size={12}/> Variant Sizes</label>
+            <div className="flex flex-wrap gap-2 mt-3">
+               {style.available_sizes?.map((s, i) => (
+                 <span key={i} className="px-3 py-1 bg-indigo-600 text-white text-xs font-bold rounded-lg shadow-sm">{s}</span>
+               )) || <span className="text-xs text-slate-300 italic">No sizes defined</span>}
+            </div>
+            <div className="mt-2 text-[9px] font-black text-slate-400 uppercase tracking-widest">Type: {style.size_type}</div>
+          </div>
+          <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2"><ImageIcon size={12}/> Packaging Specs</label>
+            <div className="mt-3">
+               <div className="text-lg font-black text-slate-800 capitalize">{style.packing_type}</div>
+               <div className="text-sm font-bold text-slate-500">{style.pcs_per_box} Pieces per container</div>
+            </div>
+          </div>
+          <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100">
+            <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Brief Description</label>
+            <p className="mt-2 text-sm font-medium text-slate-700 leading-relaxed italic">{style.style_text || 'No technical notes provided for this style.'}</p>
+          </div>
+        </div>
+
+        {/* Dynamic Technical Sections */}
+        <div className="space-y-16">
+          {template?.config.filter(c => c.name !== "General Info").map((cat, i) => (
+            <section key={i} className="animate-fade-in" style={{ animationDelay: `${i * 100}ms` }}>
+              <div className="flex items-center gap-4 mb-8">
+                 <div className="h-px flex-1 bg-slate-100"></div>
+                 <h2 className="text-sm font-black text-indigo-500 uppercase tracking-[0.3em] flex items-center gap-3">
+                   <Layers size={16}/> {cat.name}
+                 </h2>
+                 <div className="h-px flex-1 bg-slate-100"></div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-16">
+                {cat.fields.map(field => {
+                  const data = style.tech_pack[cat.name]?.[field] || { text: 'N/A', attachments: [] };
+                  const images = data.attachments.filter(a => a.type === 'image');
+                  const docs = data.attachments.filter(a => a.type === 'document');
+
+                  return (
+                    <div key={field} className="space-y-4 group">
+                      <div className="flex justify-between items-end border-b border-slate-100 pb-2 group-hover:border-indigo-200 transition-colors">
+                        <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest">{field}</h3>
+                        <span className="text-[10px] font-bold text-slate-400 group-hover:text-indigo-400 transition-colors">{data.attachments.length} Assets</span>
+                      </div>
+                      
+                      <div className="text-slate-600 text-sm font-medium leading-relaxed bg-slate-50/50 p-4 rounded-2xl border border-slate-50 min-h-[60px] whitespace-pre-wrap">
+                        {data.text || <span className="opacity-30 italic">No notes provided</span>}
+                      </div>
+
+                      {/* Attachment Grid */}
+                      {data.attachments.length > 0 && (
+                        <div className="space-y-3">
+                          {/* Image Gallery */}
+                          {images.length > 0 && (
+                            <div className="grid grid-cols-2 gap-2">
+                               {images.map((img, idx) => (
+                                 <a key={idx} href={img.url} target="_blank" rel="noreferrer" className="relative group/img aspect-square rounded-2xl overflow-hidden border border-slate-200 shadow-sm block bg-slate-100">
+                                   <img src={img.url} className="w-full h-full object-cover transition-transform group-hover/img:scale-110"/>
+                                   <div className="absolute inset-0 bg-indigo-900/60 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity">
+                                      <ExternalLink size={24} className="text-white"/>
+                                   </div>
+                                 </a>
+                               ))}
+                            </div>
+                          )}
+                          
+                          {/* Document List */}
+                          {docs.length > 0 && (
+                            <div className="space-y-2">
+                               {docs.map((doc, idx) => (
+                                 <a key={idx} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl hover:border-indigo-400 hover:shadow-md transition-all">
+                                   <div className="flex items-center gap-3 truncate pr-4">
+                                     <FileText size={16} className="text-indigo-500"/>
+                                     <span className="text-xs font-bold text-slate-700 truncate">{doc.name}</span>
+                                   </div>
+                                   <Download size={14} className="text-slate-400"/>
+                                 </a>
+                               ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+        
+        {/* Final Branding / Footer */}
+        <div className="pt-20 pb-10 text-center">
+           <div className="inline-flex items-center gap-2 px-6 py-2 bg-slate-100 rounded-full border border-slate-200 mb-4">
+              <Layers size={14} className="text-indigo-600"/>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Tintura Technical Blueprint # {style.id.slice(0, 8)}</span>
+           </div>
+           <p className="text-xs text-slate-400">Strictly Internal - For Manufacturing Use Only</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Main Component ---
 
 export const StyleDatabase: React.FC = () => {
@@ -209,6 +349,7 @@ export const StyleDatabase: React.FC = () => {
   const [viewMode, setViewMode] = useState<'catalog' | 'compare'>('catalog');
   const [searchTerm, setSearchTerm] = useState('');
   const [isEditing, setIsEditing] = useState<Style | null>(null);
+  const [viewingStyle, setViewingStyle] = useState<Style | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [compareList, setCompareList] = useState<Style[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -399,6 +540,19 @@ export const StyleDatabase: React.FC = () => {
     win.document.close();
   };
 
+  // If viewing a style in full page, render the special view
+  if (viewingStyle) {
+    return (
+      <StyleFullView 
+        style={viewingStyle} 
+        template={template} 
+        onBack={() => setViewingStyle(null)}
+        onEdit={() => { setIsEditing(viewingStyle); setViewingStyle(null); }}
+        onPrint={() => handlePrint(viewingStyle)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col xl:flex-row justify-between xl:items-center gap-4">
@@ -435,63 +589,70 @@ export const StyleDatabase: React.FC = () => {
 
       {viewMode === 'catalog' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-fade-in">
-          {filteredStyles.map(style => (
-            <div key={style.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-indigo-300 transition-all group overflow-hidden flex flex-col">
-              <div className="p-6 flex-1">
-                <div className="flex justify-between items-start mb-4">
-                   <div className="flex gap-2">
-                     <div className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">{style.garment_type}</div>
-                     <div className="bg-indigo-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-500 uppercase tracking-widest">{style.demographic}</div>
-                   </div>
-                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                     <button onClick={() => handlePrint(style)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Printer size={16}/></button>
-                     <button onClick={() => handleDelete(style.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
-                   </div>
-                </div>
-                <h3 className="text-2xl font-black text-slate-800 tracking-tight mb-2">{style.style_number}</h3>
-                <p className="text-slate-500 text-xs font-medium line-clamp-2 leading-relaxed">{style.style_text || 'No description provided.'}</p>
-                
-                <div className="mt-4 flex flex-wrap gap-1">
-                   {style.available_sizes?.slice(0, 5).map(s => <span key={s} className="px-1.5 py-0.5 bg-slate-100 text-[10px] font-bold rounded text-slate-600">{s}</span>)}
-                   {(style.available_sizes?.length || 0) > 5 && <span className="text-[10px] text-slate-400">+{style.available_sizes!.length - 5} more</span>}
-                </div>
-
-                <div className="mt-6 flex items-center gap-4">
-                  <div className="flex -space-x-2">
-                     {Object.values(style.tech_pack).flatMap(cat => Object.values(cat)).flatMap(item => item.attachments).slice(0, 4).map((att, i) => (
-                       <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-indigo-100 flex items-center justify-center text-indigo-600 overflow-hidden shadow-sm">
-                         {att.type === 'image' ? <img src={att.url} className="w-full h-full object-cover"/> : <FileText size={14}/>}
-                       </div>
-                     ))}
+          {filteredStyles.map(style => {
+            return (
+              <div 
+                key={style.id} 
+                className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-indigo-300 transition-all group overflow-hidden flex flex-col"
+              >
+                <div 
+                  className="p-6 flex-1 cursor-pointer"
+                  onClick={() => setViewingStyle(style)}
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex gap-2">
+                      <div className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">{style.garment_type}</div>
+                      <div className="bg-indigo-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-500 uppercase tracking-widest">{style.demographic}</div>
+                    </div>
+                    <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => handlePrint(style)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><Printer size={16}/></button>
+                      <button onClick={() => handleDelete(style.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16}/></button>
+                    </div>
                   </div>
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    {Object.values(style.tech_pack).flatMap(cat => Object.values(cat)).flatMap(item => item.attachments).length} Files
-                  </span>
+                  
+                  <div className="flex items-center justify-between group/title">
+                    <h3 className="text-2xl font-black text-slate-800 tracking-tight mb-2 group-hover/title:text-indigo-600 transition-colors">{style.style_number}</h3>
+                    <ChevronRight size={20} className="text-slate-300 group-hover:text-indigo-600 transition-all transform group-hover:translate-x-1" />
+                  </div>
+                  <p className="text-slate-500 text-xs font-medium line-clamp-2 leading-relaxed mb-4">{style.style_text || 'No description provided.'}</p>
+                  
+                  <div className="mt-4 flex items-center gap-4">
+                    <div className="flex -space-x-2">
+                      {Object.values(style.tech_pack).flatMap(cat => Object.values(cat)).flatMap(item => item.attachments).slice(0, 4).map((att, i) => (
+                        <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-indigo-100 flex items-center justify-center text-indigo-600 overflow-hidden shadow-sm">
+                          {att.type === 'image' ? <img src={att.url} className="w-full h-full object-cover"/> : <FileText size={14}/>}
+                        </div>
+                      ))}
+                    </div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      {Object.values(style.tech_pack).flatMap(cat => Object.values(cat)).flatMap(item => item.attachments).length} Technical Assets
+                    </span>
+                  </div>
+                </div>
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
+                  <button 
+                    onClick={() => setIsEditing(style)}
+                    className="flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-700 hover:border-indigo-500 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit3 size={14}/> Edit Tech Pack
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (compareList.find(s => s.id === style.id)) {
+                        setCompareList(prev => prev.filter(s => s.id !== style.id));
+                      } else {
+                        setCompareList(prev => [...prev, style]);
+                        setViewMode('compare');
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl border transition-all ${compareList.find(s => s.id === style.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-500 hover:text-indigo-600'}`}
+                  >
+                    <ArrowLeftRight size={18}/>
+                  </button>
                 </div>
               </div>
-              <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
-                <button 
-                  onClick={() => setIsEditing(style)}
-                  className="flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-700 hover:border-indigo-500 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
-                >
-                  <Edit3 size={14}/> Edit Tech Pack
-                </button>
-                <button 
-                  onClick={() => {
-                    if (compareList.find(s => s.id === style.id)) {
-                      setCompareList(prev => prev.filter(s => s.id !== style.id));
-                    } else {
-                      setCompareList(prev => [...prev, style]);
-                      setViewMode('compare');
-                    }
-                  }}
-                  className={`p-2.5 rounded-xl border transition-all ${compareList.find(s => s.id === style.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-500 hover:text-indigo-600'}`}
-                >
-                  <ArrowLeftRight size={18}/>
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
