@@ -1,7 +1,8 @@
 
-import React from 'react';
-import { Order, OrderStatus, SizeBreakdown } from '../../types';
-import { X, ImageIcon, FileText, Download, Paperclip, Printer, Box } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Order, OrderStatus, SizeBreakdown, Style, ConsumptionType } from '../../types';
+import { X, ImageIcon, FileText, Download, Paperclip, Printer, Box, Calculator } from 'lucide-react';
+import { fetchStyleByNumber } from '../../services/db';
 
 interface OrderDetailsModalProps {
   order: Order;
@@ -17,8 +18,65 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   onClose,
   onPrint
 }) => {
+  const [linkedStyle, setLinkedStyle] = useState<Style | null>(null);
+
+  useEffect(() => {
+    const styleRefPart = order.style_number.split(' - ')[0].trim();
+    if (styleRefPart) {
+      fetchStyleByNumber(styleRefPart).then(setLinkedStyle);
+    }
+  }, [order.style_number]);
+
   const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
   const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
+
+  const calculateRequirement = (qty: number, type: ConsumptionType, val: number) => {
+    if (!val) return 0;
+    return type === 'items_per_pc' ? qty * val : qty / val;
+  };
+
+  const getEstimatedRequirements = () => {
+    if (!linkedStyle || !order.size_breakdown) return [];
+    
+    const estimates: Record<string, { name: string, total: number }> = {};
+    const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
+    const sizeLabels = getHeaderLabels();
+
+    for (const catName in linkedStyle.tech_pack) {
+      for (const fieldName in linkedStyle.tech_pack[catName]) {
+        const item = linkedStyle.tech_pack[catName][fieldName];
+        let fieldTotal = 0;
+
+        if (item.variants) {
+          for (const variant of item.variants) {
+            const matchingRows = order.size_breakdown.filter(r => variant.colors.includes(r.color));
+            
+            if (variant.sizeVariants) {
+              for (const sv of variant.sizeVariants) {
+                const targetKeys = sizeKeys.filter((_, i) => sv.sizes.includes(sizeLabels[i]));
+                const qty = matchingRows.reduce((sum, row) => {
+                    return sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0);
+                }, 0);
+                const ratioType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
+                const ratioVal = sv.consumption_val !== undefined ? sv.consumption_val : (variant.consumption_val !== undefined ? variant.consumption_val : (item.consumption_val || 0));
+                fieldTotal += calculateRequirement(qty, ratioType, ratioVal);
+              }
+            } else if (variant.consumption_type) {
+              const qty = matchingRows.reduce((sum, row) => sum + getRowTotal(row), 0);
+              fieldTotal += calculateRequirement(qty, variant.consumption_type, variant.consumption_val || 0);
+            }
+          }
+        } else if (item.consumption_type) {
+          fieldTotal += calculateRequirement(order.quantity, item.consumption_type, item.consumption_val || 0);
+        }
+
+        if (fieldTotal > 0) {
+          estimates[fieldName] = { name: fieldName, total: Math.ceil(fieldTotal * 100) / 100 };
+        }
+      }
+    }
+    return Object.values(estimates);
+  };
 
   const renderDetailCell = (rowIdx: number, sizeKey: keyof SizeBreakdown) => {
     const plannedRow = order.size_breakdown?.[rowIdx];
@@ -44,13 +102,15 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     );
   };
 
+  const estimatedReqs = getEstimatedRequirements();
+
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden max-h-[95vh] flex flex-col animate-scale-up border border-slate-200">
         <div className="p-6 border-b flex justify-between items-center bg-slate-50">
           <div>
             <h3 className="text-2xl font-black text-slate-800 tracking-tight">{order.order_no}</h3>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Full Production Details</p>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Production Execution Details</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={28} /></button>
         </div>
@@ -75,6 +135,26 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* REQUIREMENTS SECTION */}
+          {estimatedReqs.length > 0 && (
+            <div className="bg-indigo-50/50 rounded-3xl border border-indigo-100 overflow-hidden shadow-sm">
+              <div className="p-4 bg-indigo-600 text-white flex items-center justify-between">
+                <h4 className="font-black uppercase tracking-[0.1em] text-xs flex items-center gap-2"><Calculator size={16}/> Estimated Job Requirements</h4>
+              </div>
+              <div className="p-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {estimatedReqs.map((req, i) => (
+                    <div key={i} className="p-3 bg-white rounded-xl border border-indigo-100 flex flex-col items-center text-center">
+                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{req.name}</span>
+                       <div className="text-2xl font-black text-indigo-600">{req.total}</div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[9px] font-bold text-indigo-400 uppercase mt-4 italic text-center">Quantities synced from technical database blueprint</p>
+              </div>
+            </div>
+          )}
 
           <div>
             <div className="flex justify-between items-center mb-4">

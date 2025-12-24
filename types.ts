@@ -86,9 +86,31 @@ export interface Order {
 }
 
 // --- Style Database Types ---
+export type ConsumptionType = 'items_per_pc' | 'pcs_per_item';
+
+export interface TechPackSizeVariant {
+  sizes: string[];
+  text: string;
+  attachments: Attachment[];
+  consumption_type?: ConsumptionType;
+  consumption_val?: number;
+}
+
+export interface TechPackVariant {
+  colors: string[]; // Selected colors for this specific variant instruction
+  text: string;
+  attachments: Attachment[];
+  sizeVariants?: TechPackSizeVariant[]; // support for nested size-specific splits
+  consumption_type?: ConsumptionType;
+  consumption_val?: number;
+}
+
 export interface TechPackItem {
   text: string;
   attachments: Attachment[];
+  variants?: TechPackVariant[]; // support for color-specific splits
+  consumption_type?: ConsumptionType;
+  consumption_val?: number;
 }
 
 export interface StyleCategory {
