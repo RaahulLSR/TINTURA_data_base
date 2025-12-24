@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { fetchOrders, updateOrderStatus, generateBarcodes, fetchMaterialRequests, deleteMaterialRequest, triggerMaterialEmail, fetchOrderLogs, addOrderLog, fetchStyleByNumber, fetchStyleTemplate } from '../services/db';
-import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, MaterialStatus, formatOrderNumber, Style, ConsumptionType } from '../types';
+import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, MaterialStatus, formatOrderNumber, Style, ConsumptionType, Attachment } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
 import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, Eye, CheckCircle2, History, ListTodo, Archive, Clock, Search, Mail, Loader2, Info } from 'lucide-react';
 
@@ -13,6 +13,20 @@ import { MaterialHistoryModal } from '../components/subunit/MaterialHistoryModal
 import { MaterialRequestModal } from '../components/subunit/MaterialRequestModal';
 
 const CURRENT_UNIT_ID = 2; // Sewing Unit A
+
+interface RequirementDetail {
+  label: string;
+  count: number;
+  calc: number;
+  text: string;
+  attachments: Attachment[];
+}
+
+interface DetailedRequirement {
+  name: string;
+  total: number;
+  breakdown: RequirementDetail[];
+}
 
 export const SubunitDashboard: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -120,7 +134,6 @@ export const SubunitDashboard: React.FC = () => {
       e.preventDefault();
       if (!completionModal || !completionForm) return;
       setLoading(true);
-      // Fix: changed completionForm.actual_box_count to completionForm.actualBoxCount to match state definition
       await updateOrderStatus(completionModal.id, OrderStatus.COMPLETED, undefined, { completion_breakdown: completionForm.breakdown, actual_box_count: completionForm.actualBoxCount });
       setCompletionModal(null);
       setCompletionForm(null);
@@ -159,52 +172,80 @@ export const SubunitDashboard: React.FC = () => {
     }
   };
 
-  const calculateRequirement = (qty: number, type: ConsumptionType, val: number) => {
+  const calculateRequirementValue = (qty: number, type: ConsumptionType, val: number) => {
     if (!val) return 0;
     return type === 'items_per_pc' ? qty * val : qty / val;
   };
 
-  const getEstimatedRequirements = (order: Order, linkedStyle: Style) => {
+  const getDetailedRequirements = (order: Order, linkedStyle: Style): DetailedRequirement[] => {
     if (!linkedStyle || !order.size_breakdown) return [];
     
-    const estimates: Record<string, { name: string, total: number }> = {};
+    const detailedReqs: DetailedRequirement[] = [];
     const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
     const sizeLabels = order.size_format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
 
     for (const catName in linkedStyle.tech_pack) {
       for (const fieldName in linkedStyle.tech_pack[catName]) {
         const item = linkedStyle.tech_pack[catName][fieldName];
-        let fieldTotal = 0;
+        const req: DetailedRequirement = { name: fieldName, total: 0, breakdown: [] };
 
         if (item.variants) {
           for (const variant of item.variants) {
             const matchingRows = order.size_breakdown.filter(r => variant.colors.includes(r.color));
-            
+            if (matchingRows.length === 0) continue;
+
             if (variant.sizeVariants) {
               for (const sv of variant.sizeVariants) {
                 const targetKeys = sizeKeys.filter((_, i) => sv.sizes.includes(sizeLabels[i]));
-                const qty = matchingRows.reduce((sum, row) => {
-                    return sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0);
-                }, 0);
-                const ratioType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
-                const ratioVal = sv.consumption_val !== undefined ? sv.consumption_val : (variant.consumption_val !== undefined ? variant.consumption_val : (item.consumption_val || 0));
-                fieldTotal += calculateRequirement(qty, ratioType, ratioVal);
+                const qty = matchingRows.reduce((sum, row) => sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0), 0);
+                
+                if (qty > 0) {
+                  const rType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
+                  const rVal = sv.consumption_val !== undefined ? sv.consumption_val : (variant.consumption_val !== undefined ? variant.consumption_val : (item.consumption_val || 0));
+                  const calc = calculateRequirementValue(qty, rType, rVal);
+                  
+                  req.breakdown.push({
+                    label: `${variant.colors.join('/')} - ${sv.sizes.join('/')}`,
+                    count: qty,
+                    calc: Math.ceil(calc * 100) / 100,
+                    text: sv.text || variant.text || item.text,
+                    attachments: sv.attachments.length > 0 ? sv.attachments : (variant.attachments.length > 0 ? variant.attachments : item.attachments)
+                  });
+                  req.total += calc;
+                }
               }
             } else if (variant.consumption_type) {
               const qty = matchingRows.reduce((sum, row) => sum + ( (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0) ), 0);
-              fieldTotal += calculateRequirement(qty, variant.consumption_type, variant.consumption_val || 0);
+              const calc = calculateRequirementValue(qty, variant.consumption_type, variant.consumption_val || 0);
+              req.breakdown.push({
+                label: `Color: ${variant.colors.join('/')}`,
+                count: qty,
+                calc: Math.ceil(calc * 100) / 100,
+                text: variant.text || item.text,
+                attachments: variant.attachments.length > 0 ? variant.attachments : item.attachments
+              });
+              req.total += calc;
             }
           }
         } else if (item.consumption_type) {
-          fieldTotal += calculateRequirement(order.quantity, item.consumption_type, item.consumption_val || 0);
+          const calc = calculateRequirementValue(order.quantity, item.consumption_type, item.consumption_val || 0);
+          req.breakdown.push({
+            label: "Global Requirement",
+            count: order.quantity,
+            calc: Math.ceil(calc * 100) / 100,
+            text: item.text,
+            attachments: item.attachments
+          });
+          req.total = calc;
         }
 
-        if (fieldTotal > 0) {
-          estimates[fieldName] = { name: fieldName, total: Math.ceil(fieldTotal * 100) / 100 };
+        if (req.total > 0) {
+          req.total = Math.ceil(req.total * 100) / 100;
+          detailedReqs.push(req);
         }
       }
     }
-    return Object.values(estimates);
+    return detailedReqs;
   };
 
   const handlePrintOrderSheet = async (order: Order) => {
@@ -219,27 +260,46 @@ export const SubunitDashboard: React.FC = () => {
           ]);
           
           if (style && template) {
-              const estReqs = getEstimatedRequirements(order, style);
-              if (estReqs.length > 0) {
+              const detailedReqs = getDetailedRequirements(order, style);
+              if (detailedReqs.length > 0) {
                 reqSheetHtml = `
-                  <div style="margin-top:40px; page-break-before:always;">
-                    <h3 style="background:#4f46e5; color:#fff; padding:15px 25px; font-size:18px; text-transform:uppercase; letter-spacing:3px; border-radius:12px; font-weight:900;">Estimated material Requirements</h3>
-                    <table style="width:100%; border-collapse:collapse; margin-top:20px;">
-                      <thead>
-                        <tr style="background:#f1f5f9;">
-                          <th style="border:1px solid #cbd5e1; padding:12px; text-align:left;">Component</th>
-                          <th style="border:1px solid #cbd5e1; padding:12px; text-align:right;">Approx Quantity</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        ${estReqs.map(r => `
-                          <tr>
-                            <td style="border:1px solid #cbd5e1; padding:12px; font-weight:bold;">${r.name}</td>
-                            <td style="border:1px solid #cbd5e1; padding:12px; text-align:right; font-weight:900; color:#4f46e5; font-size:18px;">${r.total}</td>
-                          </tr>
-                        `).join('')}
-                      </tbody>
-                    </table>
+                  <div style="margin-top:50px; page-break-before:always;">
+                    <h2 style="background:#4f46e5; color:#fff; padding:20px 30px; font-size:24px; text-transform:uppercase; letter-spacing:4px; border-radius:12px; font-weight:900;">Segmented Job Forecast</h2>
+                    <div style="margin-top:20px;">
+                      ${detailedReqs.map(req => `
+                        <div style="margin-bottom:40px; border:2px solid #cbd5e1; border-radius:20px; overflow:hidden; background:#fff;">
+                          <div style="background:#f1f5f9; padding:15px 25px; border-bottom:2px solid #cbd5e1; display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:18px; font-weight:900; text-transform:uppercase; color:#1e293b;">${req.name}</span>
+                            <span style="font-size:20px; font-weight:900; color:#4f46e5;">Job Total: ${req.total}</span>
+                          </div>
+                          <div style="padding:20px;">
+                            <table style="width:100%; border-collapse:collapse;">
+                              <thead>
+                                <tr style="background:#f8fafc;">
+                                  <th style="padding:10px; border:1px solid #cbd5e1; text-align:left; font-size:11px;">Job Segment</th>
+                                  <th style="padding:10px; border:1px solid #cbd5e1; text-align:right; font-size:11px;">Needed</th>
+                                  <th style="padding:10px; border:1px solid #cbd5e1; text-align:left; font-size:11px;">Technical Specifics</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                ${req.breakdown.map(b => `
+                                  <tr>
+                                    <td style="padding:12px; border:1px solid #cbd5e1; font-weight:bold; font-size:13px; width:150px;">${b.label}</td>
+                                    <td style="padding:12px; border:1px solid #cbd5e1; text-align:right; font-weight:900; color:#4f46e5; font-size:18px; width:100px;">${b.calc}</td>
+                                    <td style="padding:12px; border:1px solid #cbd5e1; font-size:13px; color:#334155;">
+                                      <div style="font-weight:700; font-size:15px; margin-bottom:8px;">${b.text || '---'}</div>
+                                      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                                        ${b.attachments.filter(a => a.type === 'image').map(img => `<img src="${img.url}" style="width:100%; border-radius:10px;" />`).join('')}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                `).join('')}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      `).join('')}
+                    </div>
                   </div>
                 `;
               }

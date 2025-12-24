@@ -1,8 +1,22 @@
 
 import React, { useState, useEffect } from 'react';
-import { Order, OrderStatus, SizeBreakdown, Style, ConsumptionType } from '../../types';
+import { Order, OrderStatus, SizeBreakdown, Style, ConsumptionType, Attachment } from '../../types';
 import { X, ImageIcon, FileText, Download, Paperclip, Printer, Box, Calculator } from 'lucide-react';
 import { fetchStyleByNumber } from '../../services/db';
+
+interface RequirementDetail {
+  label: string;
+  count: number;
+  calc: number;
+  text: string;
+  attachments: Attachment[];
+}
+
+interface DetailedRequirement {
+  name: string;
+  total: number;
+  breakdown: RequirementDetail[];
+}
 
 interface OrderDetailsModalProps {
   order: Order;
@@ -30,52 +44,80 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
   const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
 
-  const calculateRequirement = (qty: number, type: ConsumptionType, val: number) => {
+  const calculateRequirementValue = (qty: number, type: ConsumptionType, val: number) => {
     if (!val) return 0;
     return type === 'items_per_pc' ? qty * val : qty / val;
   };
 
-  const getEstimatedRequirements = () => {
+  const getDetailedRequirements = (): DetailedRequirement[] => {
     if (!linkedStyle || !order.size_breakdown) return [];
     
-    const estimates: Record<string, { name: string, total: number }> = {};
+    const detailedReqs: DetailedRequirement[] = [];
     const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
     const sizeLabels = getHeaderLabels();
 
     for (const catName in linkedStyle.tech_pack) {
       for (const fieldName in linkedStyle.tech_pack[catName]) {
         const item = linkedStyle.tech_pack[catName][fieldName];
-        let fieldTotal = 0;
+        const req: DetailedRequirement = { name: fieldName, total: 0, breakdown: [] };
 
         if (item.variants) {
           for (const variant of item.variants) {
             const matchingRows = order.size_breakdown.filter(r => variant.colors.includes(r.color));
-            
+            if (matchingRows.length === 0) continue;
+
             if (variant.sizeVariants) {
               for (const sv of variant.sizeVariants) {
                 const targetKeys = sizeKeys.filter((_, i) => sv.sizes.includes(sizeLabels[i]));
-                const qty = matchingRows.reduce((sum, row) => {
-                    return sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0);
-                }, 0);
-                const ratioType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
-                const ratioVal = sv.consumption_val !== undefined ? sv.consumption_val : (variant.consumption_val !== undefined ? variant.consumption_val : (item.consumption_val || 0));
-                fieldTotal += calculateRequirement(qty, ratioType, ratioVal);
+                const qty = matchingRows.reduce((sum, row) => sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0), 0);
+                
+                if (qty > 0) {
+                  const rType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
+                  const rVal = sv.consumption_val !== undefined ? sv.consumption_val : (variant.consumption_val !== undefined ? variant.consumption_val : (item.consumption_val || 0));
+                  const calc = calculateRequirementValue(qty, rType, rVal);
+                  
+                  req.breakdown.push({
+                    label: `${variant.colors.join('/')} - ${sv.sizes.join('/')}`,
+                    count: qty,
+                    calc: Math.ceil(calc * 100) / 100,
+                    text: sv.text || variant.text || item.text,
+                    attachments: sv.attachments.length > 0 ? sv.attachments : (variant.attachments.length > 0 ? variant.attachments : item.attachments)
+                  });
+                  req.total += calc;
+                }
               }
             } else if (variant.consumption_type) {
               const qty = matchingRows.reduce((sum, row) => sum + getRowTotal(row), 0);
-              fieldTotal += calculateRequirement(qty, variant.consumption_type, variant.consumption_val || 0);
+              const calc = calculateRequirementValue(qty, variant.consumption_type, variant.consumption_val || 0);
+              req.breakdown.push({
+                label: `Color: ${variant.colors.join('/')}`,
+                count: qty,
+                calc: Math.ceil(calc * 100) / 100,
+                text: variant.text || item.text,
+                attachments: variant.attachments.length > 0 ? variant.attachments : item.attachments
+              });
+              req.total += calc;
             }
           }
         } else if (item.consumption_type) {
-          fieldTotal += calculateRequirement(order.quantity, item.consumption_type, item.consumption_val || 0);
+          const calc = calculateRequirementValue(order.quantity, item.consumption_type, item.consumption_val || 0);
+          req.breakdown.push({
+            label: "Global Requirement",
+            count: order.quantity,
+            calc: Math.ceil(calc * 100) / 100,
+            text: item.text,
+            attachments: item.attachments
+          });
+          req.total = calc;
         }
 
-        if (fieldTotal > 0) {
-          estimates[fieldName] = { name: fieldName, total: Math.ceil(fieldTotal * 100) / 100 };
+        if (req.total > 0) {
+          req.total = Math.ceil(req.total * 100) / 100;
+          detailedReqs.push(req);
         }
       }
     }
-    return Object.values(estimates);
+    return detailedReqs;
   };
 
   const renderDetailCell = (rowIdx: number, sizeKey: keyof SizeBreakdown) => {
@@ -102,7 +144,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     );
   };
 
-  const estimatedReqs = getEstimatedRequirements();
+  const detailedReqs = getDetailedRequirements();
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -136,22 +178,42 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
             )}
           </div>
 
-          {/* REQUIREMENTS SECTION */}
-          {estimatedReqs.length > 0 && (
-            <div className="bg-indigo-50/50 rounded-3xl border border-indigo-100 overflow-hidden shadow-sm">
-              <div className="p-4 bg-indigo-600 text-white flex items-center justify-between">
-                <h4 className="font-black uppercase tracking-[0.1em] text-xs flex items-center gap-2"><Calculator size={16}/> Estimated Job Requirements</h4>
+          {/* DETAILED REQUIREMENTS SECTION */}
+          {detailedReqs.length > 0 && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="p-4 bg-indigo-600 text-white rounded-t-2xl flex items-center justify-between">
+                <h4 className="font-black uppercase tracking-[0.1em] text-xs flex items-center gap-2"><Calculator size={16}/> Segmented Material Requirements</h4>
+                <span className="text-[10px] font-bold opacity-70">SYNCED FROM MASTER TECH-PACK</span>
               </div>
-              <div className="p-5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {estimatedReqs.map((req, i) => (
-                    <div key={i} className="p-3 bg-white rounded-xl border border-indigo-100 flex flex-col items-center text-center">
-                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{req.name}</span>
-                       <div className="text-2xl font-black text-indigo-600">{req.total}</div>
+              <div className="space-y-4">
+                {detailedReqs.map((req, i) => (
+                  <div key={i} className="bg-white rounded-2xl border border-indigo-100 overflow-hidden shadow-sm">
+                    <div className="px-5 py-3 bg-indigo-50 border-b border-indigo-100 flex justify-between items-center">
+                       <span className="font-black text-indigo-900 text-sm">{req.name}</span>
+                       <span className="font-black text-indigo-700">Total: {req.total}</span>
                     </div>
-                  ))}
-                </div>
-                <p className="text-[9px] font-bold text-indigo-400 uppercase mt-4 italic text-center">Quantities synced from technical database blueprint</p>
+                    <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {req.breakdown.map((b, idx) => (
+                        <div key={idx} className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                           <div className="flex justify-between items-center">
+                              <span className="text-[9px] font-black text-slate-500 uppercase">{b.label}</span>
+                              <span className="text-sm font-black text-indigo-600">{b.calc} Req.</span>
+                           </div>
+                           <p className="text-xs text-slate-600 font-medium italic">"{b.text || 'No segments notes.'}"</p>
+                           {b.attachments.length > 0 && (
+                             <div className="flex flex-wrap gap-2 mt-2">
+                                {b.attachments.map((att, attIdx) => (
+                                  <a key={attIdx} href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-2 py-1 bg-white border rounded text-[9px] font-bold text-slate-500 hover:text-indigo-600 hover:border-indigo-200 transition-all">
+                                    {att.type === 'image' ? <ImageIcon size={10}/> : <FileText size={10}/>} {att.name}
+                                  </a>
+                                ))}
+                             </div>
+                           )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
