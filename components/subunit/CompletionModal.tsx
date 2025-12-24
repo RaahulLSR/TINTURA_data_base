@@ -1,0 +1,112 @@
+
+import React from 'react';
+import { Order, SizeBreakdown } from '../../types';
+import { X, CheckCircle2, AlertTriangle, ArrowLeftRight } from 'lucide-react';
+
+interface CompletionModalProps {
+  order: Order;
+  form: { breakdown: SizeBreakdown[]; actualBoxCount: number };
+  useNumericSizes: boolean;
+  onToggleSizeFormat: () => void;
+  onUpdateRow: (index: number, field: keyof SizeBreakdown, value: number) => void;
+  onUpdateBoxCount: (count: number) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  onClose: () => void;
+}
+
+export const CompletionModal: React.FC<CompletionModalProps> = ({
+  order,
+  form,
+  useNumericSizes,
+  onToggleSizeFormat,
+  onUpdateRow,
+  onUpdateBoxCount,
+  onSubmit,
+  onClose
+}) => {
+  const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+  const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[90vh] flex flex-col animate-scale-up">
+        <div className="p-6 border-b flex justify-between items-center bg-green-50">
+          <h3 className="text-xl font-bold text-green-900 flex items-center gap-2">
+            <CheckCircle2 /> Complete Order: {order.order_no}
+          </h3>
+          <button onClick={onClose} className="text-green-700 hover:text-green-900"><X size={24} /></button>
+        </div>
+        
+        <form onSubmit={onSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 text-sm text-yellow-800 flex items-center gap-2">
+            <AlertTriangle size={18} />
+            Please enter the <strong>ACTUAL</strong> quantities produced.
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-slate-700 mb-2">Actual Box Count</label>
+            <input 
+              type="number" 
+              required
+              min="0"
+              className="w-32 border border-slate-300 rounded p-2 text-lg font-bold bg-white text-slate-900"
+              value={form.actualBoxCount}
+              onChange={e => onUpdateBoxCount(parseInt(e.target.value) || 0)}
+            />
+          </div>
+
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-bold text-slate-700">Actual Breakdown Matrix</label>
+              <button 
+                type="button"
+                onClick={onToggleSizeFormat}
+                className="text-xs flex items-center gap-1 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-2 py-1 rounded border border-slate-200 transition-colors"
+              >
+                <ArrowLeftRight size={12} /> 
+                {useNumericSizes ? 'Letters' : 'Numbers'}
+              </button>
+            </div>
+            
+            <div className="border rounded-lg overflow-hidden overflow-x-auto">
+              <table className="w-full text-center text-sm">
+                <thead className="bg-slate-100 text-slate-600 font-semibold border-b">
+                  <tr>
+                    <th className="p-3 text-left">Color</th>
+                    {getHeaderLabels().map(h => <th key={h} className="p-3 w-20">{h}</th>)}
+                    <th className="p-3 bg-slate-100">Row Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {form.breakdown.map((row, idx) => (
+                    <tr key={idx}>
+                      <td className="p-3 text-left font-medium text-slate-700">{row.color}</td>
+                      {['s','m','l','xl','xxl','xxxl'].map(key => (
+                        <td key={key} className="p-2">
+                          <input 
+                            type="number" 
+                            className="w-16 border rounded p-1.5 text-center bg-white text-slate-900" 
+                            value={(row as any)[key]} 
+                            onChange={e => onUpdateRow(idx, key as keyof SizeBreakdown, parseInt(e.target.value) || 0)} 
+                          />
+                        </td>
+                      ))}
+                      <td className="p-3 font-bold bg-slate-50">{getRowTotal(row)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={onClose} className="px-6 py-2 font-bold text-slate-500">Back</button>
+            <button type="submit" className="bg-green-600 text-white px-10 py-3 rounded-xl font-extrabold shadow-lg hover:bg-green-700 flex items-center gap-2">
+              <CheckCircle2 /> Submit Production & Finish Job
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
