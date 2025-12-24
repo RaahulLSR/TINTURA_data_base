@@ -210,7 +210,7 @@ const CategoryEditor: React.FC<CategoryEditorProps> = ({
                   <div className="space-y-8 animate-fade-in">
                     {item.variants?.map((variant, vIdx) => (
                       <div key={vIdx} className="bg-white border-2 border-indigo-100 rounded-3xl p-6 shadow-sm relative group">
-                        <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants?.splice(vIdx, 1); setIsEditing(updated); }} className="absolute -top-3 -right-3 bg-red-500 text-white p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"><X size={16}/></button>
+                        <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants?.splice(vIdx, 1); setIsEditing(updated); }} className="absolute -top-3 -right-3 bg-red-500 text-white p-2 rounded-full shadow-lg opacity-0 group-hover/size:opacity-100 transition-opacity"><X size={16}/></button>
                         
                         <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="flex-1">
@@ -565,11 +565,24 @@ export const StyleDatabase: React.FC = () => {
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
-      const lines = text.split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
+      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      
+      // Better CSV split that respects quotes for commas inside fields
+      const splitCSV = (row: string) => {
+          const regex = /,(?=(?:(?:[^"]*"){2})*[^"]*$)/;
+          return row.split(regex).map(val => {
+              let cleaned = val.trim();
+              if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+                  cleaned = cleaned.substring(1, cleaned.length - 1);
+              }
+              return cleaned;
+          });
+      };
+
+      const headers = splitCSV(lines[0]).map(h => h.trim());
       
       const parsedData = lines.slice(1).map(line => {
-        const values = line.split(',').map(v => v.trim());
+        const values = splitCSV(line);
         if (values.length < headers.length) return null;
         const entry: any = {};
         headers.forEach((header, i) => entry[header] = values[i]);
@@ -587,31 +600,41 @@ export const StyleDatabase: React.FC = () => {
     setIsUploading(true);
     try {
       for (const row of bulkImportData) {
-        // Columns: Style No., GarmentType, Demographic, Category, Short description, Available colours, size variants, fabric
+        // Create style object with column mapping - being forgiving with header spacing/caps
+        const styleNum = row['Style No.'] || row['Style No'] || row['StyleNo'];
+        const gType = row['GarmentType'] || row['Garment Type'] || row['Garment'];
+        const demo = row['Demographic'] || row['Demo'];
+        const cat = row['Category'] || row['Cat'];
+        const desc = row['Short description'] || row['Description'] || row['Short Description'];
+        const cols = row['Available colours'] || row['Available colors'] || row['Colours'] || row['Colors'];
+        const sizes = row['size variants'] || row['Size variants'] || row['Sizes'];
+        const fabricValue = row['fabric'] || row['Fabric'];
+
         const newStyle: Partial<Style> = {
-          style_number: row['Style No.'] || 'NEW-STYLE',
-          garment_type: row['GarmentType'] || 'T-shirt',
-          demographic: row['Demographic'] || 'Men',
-          category: row['Category'] || 'Casuals',
-          style_text: row['Short description'] || '',
-          available_colors: (row['Available colours'] || '').split(';').map((s: string) => s.trim()).filter(Boolean),
-          available_sizes: (row['size variants'] || '').split(';').map((s: string) => s.trim()).filter(Boolean),
+          style_number: styleNum || 'NEW-STYLE',
+          garment_type: gType || 'T-shirt',
+          demographic: demo || 'Men',
+          category: cat || 'Casuals',
+          style_text: desc || '',
+          // Split by COMMA within the quoted CSV field
+          available_colors: (cols || '').split(',').map((s: string) => s.trim()).filter(Boolean),
+          available_sizes: (sizes || '').split(',').map((s: string) => s.trim()).filter(Boolean),
           packing_type: 'pouch',
           pcs_per_box: 1,
           tech_pack: {},
-          size_type: 'letter'
+          size_type: (sizes || '').match(/[a-zA-Z]/) ? 'letter' : 'number'
         };
 
-        // If fabric is provided, try to place it in Fabrication or style text
-        if (row['fabric']) {
-          const fabricText = `Fabric: ${row['fabric']}`;
-          newStyle.style_text = newStyle.style_text ? `${newStyle.style_text}\n${fabricText}` : fabricText;
+        if (fabricValue) {
+          const fabricNote = `Fabrication: ${fabricValue}`;
+          newStyle.style_text = newStyle.style_text ? `${newStyle.style_text}\n${fabricNote}` : fabricNote;
         }
 
         await upsertStyle(newStyle);
       }
       alert(`Successfully created ${bulkImportData.length} new styles.`);
       setIsBulkImportModalOpen(false);
+      setIsBulkMode(false);
       loadData();
     } catch (err) {
       alert("Import failed: " + err);
@@ -626,7 +649,8 @@ export const StyleDatabase: React.FC = () => {
     
     try {
       const selectedStyles = styles.filter(s => selectedStyleIds.includes(s.id));
-      const enabledUpdates = Object.entries(bulkFieldValues).filter(([_, val]) => val.isEnabled);
+      // Added type assertion to Object.entries for correct value inference
+      const enabledUpdates = (Object.entries(bulkFieldValues) as [string, typeof bulkFieldValues[string]][]).filter(([_, val]) => val.isEnabled);
       
       if (enabledUpdates.length === 0) {
         alert("Please select at least one field to update.");
@@ -662,7 +686,7 @@ export const StyleDatabase: React.FC = () => {
             item.attachments = mergeAttachments(item.attachments, attachments);
             if (consumption_type) item.consumption_type = consumption_type;
             if (consumption_val !== undefined) item.consumption_val = consumption_val;
-            if (strategy === 'overwrite') delete item.variants; 
+            if (strategy === 'overwrite') delete (item as any).variants; 
           } else if (target === 'color') {
             if (!item.variants) item.variants = [];
             const validColors = colorFilter.filter(c => updatedStyle.available_colors?.includes(c));
@@ -783,7 +807,7 @@ export const StyleDatabase: React.FC = () => {
           <div class="grid">
             <div class="box"><span class="label">Style Number</span><div class="value">${style.style_number}</div></div>
             <div class="box"><span class="label">Category</span><div class="value">${style.category}</div></div>
-            <div class="box"><span class="label">Garment Type</span><div class="value">${style.garment_type}</div></div>
+            <div class="box"><span class="label">Garment Type</span><div class="value">${style.category}</div></div>
             <div class="box"><span class="label">Demographic</span><div class="value">${style.demographic}</div></div>
             <div class="box"><span class="label">Packing Type</span><div class="value">${style.packing_type} (${style.pcs_per_box} pcs)</div></div>
             <div class="box"><span class="label">Date Generated</span><div class="value">${new Date().toLocaleDateString()}</div></div>
@@ -862,7 +886,7 @@ export const StyleDatabase: React.FC = () => {
                   <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
                     <button onClick={() => setIsEditing(style)} className="flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-700 hover:border-indigo-500 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"><Edit3 size={14}/> Edit</button>
                     <button onClick={() => handleCopyStyle(style)} className="p-2.5 bg-white text-slate-400 border border-slate-200 rounded-xl hover:text-indigo-600 hover:border-indigo-600 transition-all" title="Create Copy"><Copy size={16}/></button>
-                    <button onClick={() => { if (compareList.find(s => s.id === style.id)) setCompareList(prev => prev.filter(s => s.id !== style.id)); else { setCompareList(prev => [...prev, style]); setViewMode('compare'); } }} className={`p-2.5 rounded-xl border transition-all ${compareList.find(s => s.id === style.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-500 hover:text-indigo-600'}`}><ArrowLeftRight size={18}/></button>
+                    <button onClick={() => { if (compareList.find(s => s.id === style.id)) setCompareList(prev => prev.filter(s => s.id !== style.id)); else { setCompareList(prev => [...prev, style]); setViewMode('compare'); } }} className={`p-2.5 rounded-xl border transition-all ${compareList.find(s => s.id === style.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border border-slate-200 hover:border-indigo-500 hover:text-indigo-600'}`}><ArrowLeftRight size={18}/></button>
                   </div>
                 )}
               </div>
@@ -1076,7 +1100,9 @@ export const StyleDatabase: React.FC = () => {
                                               if (!e.target.files) return;
                                               setIsUploading(true);
                                               const newAtts = [];
-                                              for (const file of Array.from(e.target.files)) {
+                                              // Fixed file type inference with explicit cast to File[]
+                                              const files = Array.from(e.target.files) as File[];
+                                              for (const file of files) {
                                                 const url = await uploadOrderAttachment(file);
                                                 if (url) newAtts.push({ name: file.name, url, type: file.type.startsWith('image/') ? 'image' : 'document' });
                                               }
@@ -1148,14 +1174,14 @@ export const StyleDatabase: React.FC = () => {
                   <tbody className="divide-y divide-slate-100">
                     {bulkImportData.map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 font-black text-slate-800">{row['Style No.']}</td>
-                        <td className="p-4">{row['GarmentType']}</td>
-                        <td className="p-4">{row['Demographic']}</td>
-                        <td className="p-4">{row['Category']}</td>
-                        <td className="p-4 italic text-slate-500 line-clamp-1">{row['Short description']}</td>
-                        <td className="p-4 max-w-[150px] truncate">{row['Available colours']}</td>
-                        <td className="p-4 max-w-[150px] truncate">{row['size variants']}</td>
-                        <td className="p-4 font-bold text-indigo-600">{row['fabric']}</td>
+                        <td className="p-4 font-black text-slate-800">{row['Style No.'] || row['Style No'] || row['StyleNo']}</td>
+                        <td className="p-4">{row['GarmentType'] || row['Garment Type'] || row['Garment']}</td>
+                        <td className="p-4">{row['Demographic'] || row['Demo']}</td>
+                        <td className="p-4">{row['Category'] || row['Cat']}</td>
+                        <td className="p-4 italic text-slate-500 line-clamp-1">{row['Short description'] || row['Description'] || row['Short Description']}</td>
+                        <td className="p-4 max-w-[150px] truncate">{row['Available colours'] || row['Available colors'] || row['Colours'] || row['Colors']}</td>
+                        <td className="p-4 max-w-[150px] truncate">{row['size variants'] || row['Size variants'] || row['Sizes']}</td>
+                        <td className="p-4 font-bold text-indigo-600">{row['fabric'] || row['Fabric']}</td>
                       </tr>
                     ))}
                   </tbody>

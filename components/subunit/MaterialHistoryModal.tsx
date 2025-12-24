@@ -50,7 +50,8 @@ export const MaterialHistoryModal: React.FC<MaterialHistoryModalProps> = ({
           {history.length === 0 ? (
             <div className="p-8 text-center text-slate-400">No requests found.</div>
           ) : (
-            Object.entries(grouped).map(([orderId, reqs]) => {
+            // Added type assertion to Object.entries for correct inference of reqs as MaterialRequest[]
+            (Object.entries(grouped) as [string, MaterialRequest[]][]).map(([orderId, reqs]) => {
               const order = orders.find(o => o.id === orderId);
               const isExpanded = expandedOrders.includes(orderId);
               return (
