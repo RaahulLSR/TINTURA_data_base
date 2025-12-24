@@ -4,8 +4,106 @@ import { fetchStyles, upsertStyle, fetchStyleTemplate, updateStyleTemplate, dele
 import { Style, StyleTemplate, StyleCategory, TechPackItem, Attachment } from '../types';
 // Added BookOpen to the list of imports from lucide-react
 import { 
-  Plus, Search, Grid, List, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, ChevronRight, ChevronDown, PlusCircle, Settings, ArrowRight, ArrowLeftRight, Loader2, Download, Eye, Layers, Box, BookOpen
+  Plus, Search, Grid, List, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, ChevronRight, ChevronDown, PlusCircle, Settings, ArrowRight, ArrowLeftRight, Loader2, Download, Eye, Layers, Box, BookOpen, UserPlus
 } from 'lucide-react';
+
+// --- Sub-components moved outside to prevent focus loss ---
+
+interface CategoryEditorProps {
+  category: StyleCategory;
+  isEditing: Style | null;
+  setIsEditing: (style: Style | null) => void;
+  handleFileUpload: (category: string, field: string, files: FileList | null) => void;
+}
+
+const CategoryEditor: React.FC<CategoryEditorProps> = ({ 
+  category, 
+  isEditing, 
+  setIsEditing, 
+  handleFileUpload 
+}) => {
+  if (!isEditing) return null;
+  
+  const isPackingReq = category.name.toLowerCase().includes('packing');
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm mb-6">
+      <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center gap-2">
+        <Layers size={18} className="text-indigo-600"/>
+        <h4 className="font-black text-slate-700 text-xs uppercase tracking-widest">{category.name}</h4>
+      </div>
+      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Inject Packing Type and Pcs/Box if this is the Packing category */}
+        {isPackingReq && (
+          <>
+            <div className="space-y-3">
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Type of Packing</label>
+              <select 
+                className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer" 
+                value={isEditing.packing_type} 
+                onChange={e => setIsEditing({...isEditing, packing_type: e.target.value})}
+              >
+                <option value="pouch">Pouch</option>
+                <option value="cover">Cover</option>
+                <option value="box">Box</option>
+              </select>
+            </div>
+            <div className="space-y-3">
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">No of pieces / Box</label>
+              <input 
+                type="number" 
+                className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-black focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm" 
+                value={isEditing.pcs_per_box} 
+                onChange={e => setIsEditing({...isEditing, pcs_per_box: parseInt(e.target.value) || 0})}
+              />
+            </div>
+          </>
+        )}
+
+        {category.fields.map(field => {
+          const data = isEditing.tech_pack[category.name]?.[field] || { text: '', attachments: [] };
+          return (
+            <div key={field} className="space-y-3">
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{field}</label>
+              <div className="relative group">
+                <textarea 
+                  className="w-full border-2 border-slate-100 rounded-xl p-4 text-sm font-medium focus:border-indigo-500 outline-none min-h-[100px] bg-slate-50/50 focus:bg-white transition-all text-black"
+                  value={data.text}
+                  placeholder={`Enter ${field.toLowerCase()} details...`}
+                  onChange={e => {
+                    const updated = { ...isEditing };
+                    if (!updated.tech_pack[category.name]) updated.tech_pack[category.name] = {};
+                    updated.tech_pack[category.name][field] = { ...data, text: e.target.value };
+                    setIsEditing(updated);
+                  }}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {data.attachments.map((att, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700">
+                    {att.type === 'image' ? <ImageIcon size={14}/> : <FileText size={14}/>}
+                    <span className="truncate max-w-[100px]">{att.name}</span>
+                    <button type="button" onClick={() => {
+                      const updated = { ...isEditing };
+                      updated.tech_pack[category.name][field].attachments.splice(idx, 1);
+                      setIsEditing(updated);
+                    }} className="hover:text-red-500"><X size={14}/></button>
+                  </div>
+                ))}
+                <label className="bg-white border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2">
+                  <Plus size={14}/> Add File
+                  <input type="file" multiple className="hidden" onChange={e => handleFileUpload(category.name, field, e.target.files)}/>
+                </label>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// --- Main Component ---
 
 export const StyleDatabase: React.FC = () => {
   const [styles, setStyles] = useState<Style[]>([]);
@@ -17,11 +115,21 @@ export const StyleDatabase: React.FC = () => {
   const [compareList, setCompareList] = useState<Style[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  // Dynamic Options
+  const [garmentTypeOptions, setGarmentTypeOptions] = useState(['Pant', 'Trackpant', 'Shorts', 'T-shirt']);
+  const [demographicOptions, setDemographicOptions] = useState(['Men', 'Boys']);
+
   // Load Data
   const loadData = async () => {
     const [s, t] = await Promise.all([fetchStyles(), fetchStyleTemplate()]);
     setStyles(s);
     setTemplate(t);
+
+    // Collect existing garment types and demographics to populate lists
+    const existingGarments = Array.from(new Set([...garmentTypeOptions, ...s.map(style => style.garment_type).filter(Boolean) as string[]]));
+    const existingDemos = Array.from(new Set([...demographicOptions, ...s.map(style => style.demographic).filter(Boolean) as string[]]));
+    setGarmentTypeOptions(existingGarments);
+    setDemographicOptions(existingDemos);
   };
 
   useEffect(() => { loadData(); }, []);
@@ -29,7 +137,8 @@ export const StyleDatabase: React.FC = () => {
   // Filter styles
   const filteredStyles = styles.filter(s => 
     s.style_number.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    s.category.toLowerCase().includes(searchTerm.toLowerCase())
+    s.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    s.garment_type?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Handlers
@@ -38,8 +147,6 @@ export const StyleDatabase: React.FC = () => {
     if (!isEditing) return;
     setIsUploading(true);
 
-    // Filter out empty ID for new styles to let Supabase/Postgres handle UUID generation
-    // If ID is empty string, Supabase will try to cast it to UUID and fail with "invalid input syntax for type uuid"
     const payload: Partial<Style> = { ...isEditing };
     if (!payload.id || payload.id === "") {
       delete payload.id;
@@ -65,7 +172,9 @@ export const StyleDatabase: React.FC = () => {
         category: source.category,
         packing_type: source.packing_type,
         pcs_per_box: source.pcs_per_box,
-        style_text: source.style_text
+        style_text: source.style_text,
+        garment_type: source.garment_type,
+        demographic: source.demographic
       });
     }
   };
@@ -98,11 +207,31 @@ export const StyleDatabase: React.FC = () => {
     setIsUploading(false);
   };
 
+  const handleAddNewGarmentType = () => {
+    const newVal = prompt("Enter new Garment Type:");
+    if (newVal && !garmentTypeOptions.includes(newVal)) {
+      setGarmentTypeOptions([...garmentTypeOptions, newVal]);
+      if (isEditing) setIsEditing({ ...isEditing, garment_type: newVal });
+    } else if (newVal) {
+      if (isEditing) setIsEditing({ ...isEditing, garment_type: newVal });
+    }
+  };
+
+  const handleAddNewDemographic = () => {
+    const newVal = prompt("Enter new Demographic (e.g. Men, Boys, Girls):");
+    if (newVal && !demographicOptions.includes(newVal)) {
+      setDemographicOptions([...demographicOptions, newVal]);
+      if (isEditing) setIsEditing({ ...isEditing, demographic: newVal });
+    } else if (newVal) {
+      if (isEditing) setIsEditing({ ...isEditing, demographic: newVal });
+    }
+  };
+
   const handlePrint = (style: Style) => {
     const win = window.open('', 'TechPack', 'width=1000,height=800');
     if (!win) return;
     
-    const categoriesHtml = template?.config.map(cat => {
+    const categoriesHtml = template?.config.filter(c => c.name !== "General Info").map(cat => {
       const fields = cat.fields.map(f => {
         const data = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
         const imagesHtml = data.attachments.filter(a => a.type === 'image').map(img => `
@@ -121,84 +250,43 @@ export const StyleDatabase: React.FC = () => {
         `;
       }).join('');
       
+      const extraMetaHtml = cat.name.toLowerCase().includes('packing') ? `
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; border-bottom:2px solid #000; padding-bottom:15px;">
+           <div><span style="font-size:10px; font-weight:bold; color:#666; display:block;">Packing Type</span><strong>${style.packing_type}</strong></div>
+           <div><span style="font-size:10px; font-weight:bold; color:#666; display:block;">Pcs/Box</span><strong>${style.pcs_per_box}</strong></div>
+        </div>
+      ` : '';
+
       return `
         <div style="margin-top:40px;">
           <h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name}</h3>
-          <div style="padding:10px;">${fields}</div>
+          <div style="padding:10px;">
+            ${extraMetaHtml}
+            ${fields}
+          </div>
         </div>
       `;
     }).join('');
 
     win.document.write(`
-      <html><head><title>Tech Pack - ${style.style_number}</title><style>body { font-family: sans-serif; padding: 40px; color: #333; } .header { border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-end; } .brand { font-size: 32px; font-weight: 900; } .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; } .box { border: 2px solid #000; padding: 10px; font-size: 13px; } .label { font-size: 10px; font-weight: bold; color: #666; display: block; margin-bottom: 3px; }</style></head>
+      <html><head><title>Tech Pack - ${style.style_number}</title><style>body { font-family: sans-serif; padding: 40px; color: #333; } .header { border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-end; } .brand { font-size: 32px; font-weight: 900; } .meta { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; } .box { border: 2px solid #000; padding: 10px; font-size: 13px; } .label { font-size: 10px; font-weight: bold; color: #666; display: block; margin-bottom: 3px; }</style></head>
       <body>
         <div class="header">
           <div class="brand">TINTURA SST<br/><span style="font-size:16px; color:#666;">STYLE TECH-PACK</span></div>
           <div style="text-align:right; font-weight:bold; font-size:18px;"># ${style.style_number}</div>
         </div>
         <div class="meta">
+          <div class="box"><span class="label">Style Number</span><strong>${style.style_number}</strong></div>
+          <div class="box"><span class="label">Garment Type</span><strong>${style.garment_type || '---'}</strong></div>
+          <div class="box"><span class="label">Demographic</span><strong>${style.demographic || '---'}</strong></div>
           <div class="box"><span class="label">Category</span><strong>${style.category}</strong></div>
-          <div class="box"><span class="label">Packing Type</span><strong>${style.packing_type}</strong></div>
-          <div class="box"><span class="label">Pcs/Box</span><strong>${style.pcs_per_box}</strong></div>
+          <div class="box"><span class="label">Description</span><strong>${style.style_text || '---'}</strong></div>
         </div>
         ${categoriesHtml}
         <script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script>
       </body></html>
     `);
     win.document.close();
-  };
-
-  // UI Components
-  const CategoryEditor = ({ category }: { category: StyleCategory }) => {
-    if (!isEditing) return null;
-    return (
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm mb-6">
-        <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center gap-2">
-          <Layers size={18} className="text-indigo-600"/>
-          <h4 className="font-black text-slate-700 text-xs uppercase tracking-widest">{category.name}</h4>
-        </div>
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-          {category.fields.map(field => {
-            const data = isEditing.tech_pack[category.name]?.[field] || { text: '', attachments: [] };
-            return (
-              <div key={field} className="space-y-3">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{field}</label>
-                <div className="relative group">
-                  <textarea 
-                    className="w-full border-2 border-slate-100 rounded-xl p-4 text-sm font-medium focus:border-indigo-500 outline-none min-h-[100px] bg-slate-50/50 focus:bg-white transition-all text-black"
-                    value={data.text}
-                    placeholder={`Enter ${field.toLowerCase()} details...`}
-                    onChange={e => {
-                      const updated = { ...isEditing };
-                      if (!updated.tech_pack[category.name]) updated.tech_pack[category.name] = {};
-                      updated.tech_pack[category.name][field] = { ...data, text: e.target.value };
-                      setIsEditing(updated);
-                    }}
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {data.attachments.map((att, idx) => (
-                    <div key={idx} className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700">
-                      {att.type === 'image' ? <ImageIcon size={14}/> : <FileText size={14}/>}
-                      <span className="truncate max-w-[100px]">{att.name}</span>
-                      <button onClick={() => {
-                        const updated = { ...isEditing };
-                        updated.tech_pack[category.name][field].attachments.splice(idx, 1);
-                        setIsEditing(updated);
-                      }} className="hover:text-red-500"><X size={14}/></button>
-                    </div>
-                  ))}
-                  <label className="bg-white border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2">
-                    <Plus size={14}/> Add File
-                    <input type="file" multiple className="hidden" onChange={e => handleFileUpload(category.name, field, e.target.files)}/>
-                  </label>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
   };
 
   return (
@@ -220,14 +308,14 @@ export const StyleDatabase: React.FC = () => {
             <button onClick={() => setViewMode('compare')} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'compare' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><ArrowLeftRight size={18}/> Compare</button>
           </div>
           <button onClick={() => setIsConfigOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all"><Settings size={20}/></button>
-          <button onClick={() => setIsEditing({ id: '', style_number: '', category: 'Casuals', packing_type: 'pouch', pcs_per_box: 0, style_text: '', tech_pack: {} })} className="bg-indigo-600 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"><Plus size={20}/> New Style</button>
+          <button onClick={() => setIsEditing({ id: '', style_number: '', category: 'Casuals', packing_type: 'pouch', pcs_per_box: 0, style_text: '', garment_type: 'T-shirt', demographic: 'Men', tech_pack: {} })} className="bg-indigo-600 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"><Plus size={20}/> New Style</button>
         </div>
       </div>
 
       <div className="relative">
         <input 
           type="text" 
-          placeholder="Search by Style Number or Category..." 
+          placeholder="Search by Style Number, Category, or Garment Type..." 
           className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none transition-all font-bold shadow-sm bg-white text-black"
           value={searchTerm}
           onChange={e => setSearchTerm(e.target.value)}
@@ -241,7 +329,10 @@ export const StyleDatabase: React.FC = () => {
             <div key={style.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-indigo-300 transition-all group overflow-hidden flex flex-col">
               <div className="p-6 flex-1">
                 <div className="flex justify-between items-start mb-4">
-                   <div className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">{style.category}</div>
+                   <div className="flex gap-2">
+                     <div className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">{style.garment_type}</div>
+                     <div className="bg-indigo-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-500 uppercase tracking-widest">{style.demographic}</div>
+                   </div>
                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                      <button onClick={() => handlePrint(style)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Printer size={16}/></button>
                      <button onClick={() => handleDelete(style.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
@@ -307,16 +398,34 @@ export const StyleDatabase: React.FC = () => {
                          <h3 className="text-2xl font-black text-slate-800">{style.style_number}</h3>
                          <button onClick={() => setCompareList(prev => prev.filter(s => s.id !== style.id))} className="p-1 text-slate-300 hover:text-red-500 transition-colors"><X size={20}/></button>
                       </div>
-                      <div className="mt-4 flex gap-2">
+                      <div className="mt-4 flex flex-wrap gap-2">
                         <span className="text-[10px] font-black bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full uppercase">{style.category}</span>
-                        <span className="text-[10px] font-black bg-slate-100 text-slate-500 px-3 py-1 rounded-full uppercase">{style.packing_type}</span>
+                        <span className="text-[10px] font-black bg-slate-100 text-slate-700 px-3 py-1 rounded-full uppercase">{style.garment_type}</span>
+                        <span className="text-[10px] font-black bg-slate-100 text-slate-700 px-3 py-1 rounded-full uppercase">{style.demographic}</span>
                       </div>
                    </div>
                    <div className="p-6 space-y-8 overflow-y-auto">
-                      {template?.config.map(cat => (
+                      <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                        <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Style Text / Description</div>
+                        <div className="text-sm font-medium text-slate-700 leading-relaxed whitespace-pre-wrap">{style.style_text || '---'}</div>
+                      </div>
+
+                      {template?.config.filter(c => c.name !== "General Info").map(cat => (
                         <div key={cat.name}>
                           <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest border-b border-indigo-100 pb-2 mb-4">{cat.name}</h4>
                           <div className="space-y-6">
+                            {cat.name.toLowerCase().includes('packing') && (
+                                <div className="grid grid-cols-2 gap-4 bg-slate-100 p-3 rounded-lg border border-slate-200 mb-4">
+                                   <div>
+                                     <div className="text-[9px] font-black text-slate-400 uppercase">Packing</div>
+                                     <div className="text-xs font-bold text-slate-800 uppercase">{style.packing_type}</div>
+                                   </div>
+                                   <div>
+                                     <div className="text-[9px] font-black text-slate-400 uppercase">Pcs/Box</div>
+                                     <div className="text-xs font-bold text-slate-800">{style.pcs_per_box}</div>
+                                   </div>
+                                </div>
+                            )}
                             {cat.fields.map(field => {
                               const data = style.tech_pack[cat.name]?.[field] || { text: '---', attachments: [] };
                               return (
@@ -369,11 +478,33 @@ export const StyleDatabase: React.FC = () => {
             </div>
             
             <form onSubmit={handleSaveStyle} className="flex-1 overflow-y-auto p-8 bg-slate-50/30">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+              {/* Header Grid: Restructured for new inputs */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-10">
                  <div className="col-span-1">
                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Style Number</label>
                    <input required className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all" value={isEditing.style_number} onChange={e => setIsEditing({...isEditing, style_number: e.target.value})}/>
                  </div>
+                 
+                 <div className="col-span-1">
+                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Garment Type</label>
+                   <div className="flex gap-2">
+                     <select className="flex-1 border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer" value={isEditing.garment_type} onChange={e => setIsEditing({...isEditing, garment_type: e.target.value})}>
+                        {garmentTypeOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                     </select>
+                     <button type="button" onClick={handleAddNewGarmentType} className="p-4 bg-white border-2 border-slate-100 rounded-xl text-indigo-600 hover:border-indigo-500 transition-all"><Plus size={20}/></button>
+                   </div>
+                 </div>
+
+                 <div className="col-span-1">
+                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Demographic</label>
+                   <div className="flex gap-2">
+                     <select className="flex-1 border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer" value={isEditing.demographic} onChange={e => setIsEditing({...isEditing, demographic: e.target.value})}>
+                        {demographicOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                     </select>
+                     <button type="button" onClick={handleAddNewDemographic} className="p-4 bg-white border-2 border-slate-100 rounded-xl text-indigo-600 hover:border-indigo-500 transition-all"><Plus size={20}/></button>
+                   </div>
+                 </div>
+
                  <div className="col-span-1">
                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Category</label>
                    <select className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer" value={isEditing.category} onChange={e => setIsEditing({...isEditing, category: e.target.value})}>
@@ -383,16 +514,8 @@ export const StyleDatabase: React.FC = () => {
                    </select>
                  </div>
                  <div className="col-span-1">
-                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Packing Type</label>
-                   <select className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer" value={isEditing.packing_type} onChange={e => setIsEditing({...isEditing, packing_type: e.target.value})}>
-                      <option value="pouch">Pouch</option>
-                      <option value="cover">Cover</option>
-                      <option value="box">Box</option>
-                   </select>
-                 </div>
-                 <div className="col-span-1">
-                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Pcs / Box</label>
-                   <input type="number" className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-black focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm" value={isEditing.pcs_per_box} onChange={e => setIsEditing({...isEditing, pcs_per_box: parseInt(e.target.value) || 0})}/>
+                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Short Description</label>
+                   <input className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all" value={isEditing.style_text} onChange={e => setIsEditing({...isEditing, style_text: e.target.value})} placeholder="e.g. Poly-cotton blend"/>
                  </div>
               </div>
 
@@ -416,8 +539,15 @@ export const StyleDatabase: React.FC = () => {
                 </select>
               </div>
 
-              {template?.config.map(cat => (
-                <CategoryEditor key={cat.name} category={cat} />
+              {/* Technical breakdown sections */}
+              {template?.config.filter(cat => cat.name !== "General Info").map(cat => (
+                <CategoryEditor 
+                  key={cat.name} 
+                  category={cat} 
+                  isEditing={isEditing} 
+                  setIsEditing={setIsEditing} 
+                  handleFileUpload={handleFileUpload} 
+                />
               ))}
 
             </form>
@@ -453,12 +583,14 @@ export const StyleDatabase: React.FC = () => {
                       className="bg-transparent font-black text-indigo-700 uppercase tracking-widest outline-none border-b-2 border-transparent focus:border-indigo-400 pb-1"
                       value={cat.name}
                       onChange={e => {
+                        if (!template) return;
                         const newConfig = [...template.config];
                         newConfig[catIdx].name = e.target.value;
                         setTemplate({ ...template, config: newConfig });
                       }}
                     />
                     <button onClick={() => {
+                      if (!template) return;
                       const newConfig = template.config.filter((_, i) => i !== catIdx);
                       setTemplate({ ...template, config: newConfig });
                     }} className="text-red-300 hover:text-red-500"><Trash2 size={18}/></button>
@@ -470,12 +602,14 @@ export const StyleDatabase: React.FC = () => {
                           className="flex-1 bg-white border border-slate-200 rounded-lg px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
                           value={field}
                           onChange={e => {
+                            if (!template) return;
                             const newConfig = [...template.config];
                             newConfig[catIdx].fields[fieldIdx] = e.target.value;
                             setTemplate({ ...template, config: newConfig });
                           }}
                         />
                         <button onClick={() => {
+                          if (!template) return;
                           const newConfig = [...template.config];
                           newConfig[catIdx].fields.splice(fieldIdx, 1);
                           setTemplate({ ...template, config: newConfig });
@@ -484,6 +618,7 @@ export const StyleDatabase: React.FC = () => {
                     ))}
                     <button 
                       onClick={() => {
+                        if (!template) return;
                         const newConfig = [...template.config];
                         newConfig[catIdx].fields.push("New Detail");
                         setTemplate({ ...template, config: newConfig });

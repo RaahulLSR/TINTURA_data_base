@@ -18,7 +18,7 @@ export interface AppUser {
 export enum OrderStatus {
   ASSIGNED = 'ASSIGNED',
   IN_PROGRESS = 'IN_PROGRESS', 
-  QC = 'QC',
+  QC = 'QC', 
   QC_APPROVED = 'QC_APPROVED', 
   PACKED = 'PACKED',
   COMPLETED = 'COMPLETED'
@@ -105,6 +105,8 @@ export interface Style {
   style_text: string;
   tech_pack: Record<string, Record<string, TechPackItem>>;
   created_at?: string;
+  garment_type?: string;
+  demographic?: string;
 }
 
 export interface StyleTemplate {
