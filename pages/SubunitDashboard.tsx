@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, updateOrderStatus, generateBarcodes, fetchMaterialRequests, deleteMaterialRequest, triggerMaterialEmail, fetchOrderLogs, addOrderLog } from '../services/db';
+import { fetchOrders, updateOrderStatus, generateBarcodes, fetchMaterialRequests, deleteMaterialRequest, triggerMaterialEmail, fetchOrderLogs, addOrderLog, fetchStyleById, fetchStyleTemplate } from '../services/db';
 import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, MaterialStatus, formatOrderNumber } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
 import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, Eye, CheckCircle2, History, ListTodo, Archive, Clock, Search, Mail, Loader2, Info } from 'lucide-react';
@@ -158,7 +158,46 @@ export const SubunitDashboard: React.FC = () => {
     }
   };
 
-  const handlePrintOrderSheet = (order: Order) => {
+  const handlePrintOrderSheet = async (order: Order) => {
+      let techPackHtml = '';
+      
+      // Fetch Tech Pack if style_id is available
+      if (order.style_id) {
+          const [style, template] = await Promise.all([
+              fetchStyleById(order.style_id),
+              fetchStyleTemplate()
+          ]);
+          
+          if (style && template) {
+              techPackHtml = template.config.filter(c => c.name !== "General Info").map(cat => {
+                  const fields = cat.fields.map(f => {
+                      const data = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
+                      const imagesHtml = data.attachments.filter(a => a.type === 'image').map(img => `
+                        <div style="border:1px solid #ddd; padding:10px; text-align:center; break-inside:avoid;">
+                          <img src="${img.url}" style="max-width:100%; max-height:400px; border-radius:4px;" />
+                          <div style="font-size:10px; margin-top:5px; font-weight:bold;">${img.name}</div>
+                        </div>
+                      `).join('');
+                      
+                      return `
+                        <div style="margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:10px; break-inside:avoid;">
+                          <div style="font-size:11px; font-weight:bold; color:#666; text-transform:uppercase; margin-bottom:4px;">${f}</div>
+                          <div style="font-size:14px; font-weight:500;">${data.text || '---'}</div>
+                          ${imagesHtml ? `<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">${imagesHtml}</div>` : ''}
+                        </div>
+                      `;
+                  }).join('');
+                  
+                  return `
+                    <div style="margin-top:40px; page-break-before:always;">
+                      <h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name} (Style Database Reference)</h3>
+                      <div style="padding:10px;">${fields}</div>
+                    </div>
+                  `;
+              }).join('');
+          }
+      }
+
       const headers = order.size_format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
       const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
       const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
@@ -182,7 +221,7 @@ export const SubunitDashboard: React.FC = () => {
 
       const win = window.open('', 'PrintOrderSheet', 'width=1000,height=800');
       if (win) {
-          win.document.write(`<html><head><title>Job Sheet - ${formattedNo}</title><style>body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; font-size: 14px; color: #333; } .header { text-align: center; border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; } .brand { font-size: 42px; font-weight: 900; text-transform: uppercase; margin: 0; } .title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #444; } .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; } .box { padding: 15px; border: 2px solid #333; border-radius: 6px; } .label { font-size: 11px; text-transform: uppercase; color: #666; font-weight: bold; } .value { font-size: 18px; font-weight: bold; } table { width: 100%; border-collapse: collapse; margin-top: 20px; } th, td { border: 1px solid #333; padding: 12px; text-align: center; } th { background: #f0f0f0; font-weight: 800; text-transform: uppercase; } .section-title { font-size: 18px; font-weight: 900; border-bottom: 3px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; }</style></head><body><div class="header"><div class="brand">TINTURA SST</div><div class="title">Manufacturing Job Sheet</div></div><div class="grid"><div class="box"><span class="label">Order Number</span><div class="value">${formattedNo}</div></div><div class="box"><span class="label">Style Number</span><div class="value">${order.style_number}</div></div><div class="box"><span class="label">Total Quantity</span><div class="value">${order.quantity} PCS</div></div><div class="box"><span class="label">Planned Boxes</span><div class="value">${order.box_count || '---'}</div></div><div class="box"><span class="label">Delivery Deadline</span><div class="value">${order.target_delivery_date}</div></div></div><div class="section-title">Size Matrix Breakdown</div><table><thead><tr><th style="text-align:left;">Color</th>${headers.map(h => `<th>${h}</th>`).join('')}<th>Total</th></tr></thead><tbody>${breakdownRows}</tbody></table><div class="section-title">Production Requirements</div><div style="padding: 20px; border: 2px solid #333; min-height: 80px; background:#fcfcfc; border-radius:6px; font-size:16px;">${order.description || "No specific manufacturing notes provided."}</div>${attachmentHtml}<script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script></body></html>`);
+          win.document.write(`<html><head><title>Job Sheet - ${formattedNo}</title><style>body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; font-size: 14px; color: #333; } .header { text-align: center; border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; } .brand { font-size: 42px; font-weight: 900; text-transform: uppercase; margin: 0; } .title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #444; } .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; } .box { padding: 15px; border: 2px solid #333; border-radius: 6px; } .label { font-size: 11px; text-transform: uppercase; color: #666; font-weight: bold; } .value { font-size: 18px; font-weight: bold; } table { width: 100%; border-collapse: collapse; margin-top: 20px; } th, td { border: 1px solid #333; padding: 12px; text-align: center; } th { background: #f0f0f0; font-weight: 800; text-transform: uppercase; } .section-title { font-size: 18px; font-weight: 900; border-bottom: 3px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; }</style></head><body><div class="header"><div class="brand">TINTURA SST</div><div class="title">Manufacturing Job Sheet</div></div><div class="grid"><div class="box"><span class="label">Order Number</span><div class="value">${formattedNo}</div></div><div class="box"><span class="label">Style Number</span><div class="value">${order.style_number}</div></div><div class="box"><span class="label">Total Quantity</span><div class="value">${order.quantity} PCS</div></div><div class="box"><span class="label">Planned Boxes</span><div class="value">${order.box_count || '---'}</div></div><div class="box"><span class="label">Delivery Deadline</span><div class="value">${order.target_delivery_date}</div></div></div><div class="section-title">Size Matrix Breakdown</div><table><thead><tr><th style="text-align:left;">Color</th>${headers.map(h => `<th>${h}</th>`).join('')}<th>Total</th></tr></thead><tbody>${breakdownRows}</tbody></table><div class="section-title">Production Requirements</div><div style="padding: 20px; border: 2px solid #333; min-height: 80px; background:#fcfcfc; border-radius:6px; font-size:16px;">${order.description || "No specific manufacturing notes provided."}</div>${attachmentHtml}${techPackHtml}<script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script></body></html>`);
           win.document.close();
       }
   };

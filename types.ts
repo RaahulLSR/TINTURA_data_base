@@ -67,6 +67,7 @@ export interface Order {
   order_no: string;
   unit_id: number;
   style_number: string;
+  style_id?: string; // Linked Style DB ID
   quantity: number;
   box_count?: number; 
   actual_box_count?: number; 

@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Printer, Save, Loader2, Clock, Paperclip, Box, Image as ImageIcon, FileText, Download, ArrowLeftRight, Upload } from 'lucide-react';
-import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber } from '../../types';
-import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment } from '../../services/db';
+import { X, Pencil, Trash2, Printer, Save, Loader2, Clock, Paperclip, Box, Image as ImageIcon, FileText, Download, ArrowLeftRight, Upload, BookOpen } from 'lucide-react';
+import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber, Style, StyleTemplate } from '../../types';
+import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleById, fetchStyleTemplate } from '../../services/db';
 
 interface AdminOrderDetailsModalProps {
   order: Order;
@@ -48,9 +48,51 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     }
   };
 
-  const handlePrint = () => {
-    // Re-use printing logic from original (Simplified here for space, assume same function as original)
-    alert("Printing Job Sheet...");
+  const handlePrint = async () => {
+    let techPackHtml = '';
+    
+    if (order.style_id) {
+        const [style, template] = await Promise.all([
+            fetchStyleById(order.style_id),
+            fetchStyleTemplate()
+        ]);
+        
+        if (style && template) {
+            techPackHtml = template.config.filter(c => c.name !== "General Info").map(cat => {
+                const isPreProd = cat.name.toLowerCase().includes('pre production');
+                const variantMetaHtml = isPreProd ? `
+                    <div style="background:#f9f9f9; border:1px solid #eee; padding:15px; border-radius:4px; margin-bottom:20px; display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+                       <div><span style="font-size:10px; font-weight:bold; color:#888; text-transform:uppercase;">Blueprint Colours</span><br/><strong>${style.available_colors?.join(', ') || '---'}</strong></div>
+                       <div><span style="font-size:10px; font-weight:bold; color:#888; text-transform:uppercase;">Size Breakdown</span><br/><strong>${style.available_sizes?.join(', ') || '---'} (${style.size_type})</strong></div>
+                    </div>
+                ` : '';
+
+                const fields = cat.fields.map(f => {
+                    const data = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
+                    const imagesHtml = data.attachments.filter(a => a.type === 'image').map(img => `
+                        <div style="border:1px solid #ddd; padding:10px; text-align:center; break-inside:avoid;">
+                            <img src="${img.url}" style="max-width:100%; max-height:400px; border-radius:4px;" />
+                            <div style="font-size:10px; margin-top:5px; font-weight:bold;">${img.name}</div>
+                        </div>
+                    `).join('');
+                    return `<div style="margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:10px; break-inside:avoid;"><div style="font-size:11px; font-weight:bold; color:#666; text-transform:uppercase; margin-bottom:4px;">${f}</div><div style="font-size:14px; font-weight:500;">${data.text || '---'}</div>${imagesHtml ? `<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">${imagesHtml}</div>` : ''}</div>`;
+                }).join('');
+
+                return `<div style="margin-top:40px; page-break-before:always;"><h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name} (Style DB)</h3><div style="padding:10px;">${variantMetaHtml}${fields}</div></div>`;
+            }).join('');
+        }
+    }
+
+    const formattedNo = formatOrderNumber(order);
+    const headers = order.size_format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+    const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
+    const breakdownRows = (order.size_breakdown || []).map(row => `<tr><td style="text-align:left; font-weight:bold;">${row.color}</td>${keys.map(k => `<td>${(row as any)[k]}</td>`).join('')}<td style="font-weight:bold;">${getRowTotal(row)}</td></tr>`).join('');
+
+    const win = window.open('', 'OrderPrint', 'width=1000,height=800');
+    if (win) {
+        win.document.write(`<html><head><title>Job Sheet - ${formattedNo}</title><style>body { font-family: sans-serif; padding: 40px; color: #333; } .header { text-align: center; border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; } .brand { font-size: 32px; font-weight: 900; } .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; } .box { padding: 15px; border: 2px solid #333; } .label { font-size: 10px; font-weight: bold; color: #666; text-transform: uppercase; } .value { font-size: 18px; font-weight: bold; } table { width: 100%; border-collapse: collapse; margin-top: 20px; } th, td { border: 1px solid #333; padding: 12px; text-align: center; } th { background: #f0f0f0; } .section-title { font-size: 18px; font-weight: 900; border-bottom: 3px solid #333; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; }</style></head><body><div class="header"><div class="brand">TINTURA SST</div><div>Manufacturing Job Sheet</div></div><div class="grid"><div class="box"><span class="label">Order</span><div class="value">${formattedNo}</div></div><div class="box"><span class="label">Style</span><div class="value">${order.style_number}</div></div><div class="box"><span class="label">Qty</span><div class="value">${order.quantity} PCS</div></div></div><div class="section-title">Size Matrix</div><table><thead><tr><th style="text-align:left;">Color</th>${headers.map(h => `<th>${h}</th>`).join('')}<th>Total</th></tr></thead><tbody>${breakdownRows}</tbody></table><div class="section-title">Production Notes</div><div style="padding:15px; border:2px solid #333;">${order.description || 'N/A'}</div>${techPackHtml}<script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script></body></html>`);
+        win.document.close();
+    }
   };
 
   const renderDetailCell = (rowIdx: number, sizeKey: keyof SizeBreakdown) => {
@@ -76,6 +118,18 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-8 space-y-8">
+          
+          {/* Linked Style Indicator */}
+          {order.style_id && (
+            <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex items-center gap-3">
+                <BookOpen size={20} className="text-indigo-600"/>
+                <div>
+                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Linked Style DB Asset</p>
+                  <p className="text-sm font-bold text-indigo-900 mt-1">This order is connected to the Technical Blueprint. Printing will include the master Tech Pack.</p>
+                </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div className="p-5 bg-slate-50 rounded-2xl border">
               <span className="block text-[10px] text-slate-400 uppercase font-black mb-2">Volume</span>
@@ -131,7 +185,9 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
         <div className="p-6 border-t bg-slate-50 flex justify-between items-center">
           <button onClick={() => { if(confirm("Delete?")) deleteOrder(order.id).then(() => {onRefresh(); onClose();}); }} className="p-3 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all"><Trash2 size={24}/></button>
           <div className="flex items-center gap-4">
-            <button onClick={handlePrint} className="px-8 py-3 bg-white text-indigo-600 border-2 border-indigo-600 rounded-xl font-black uppercase text-xs">Print Sheet</button>
+            <button onClick={handlePrint} className="px-8 py-3 bg-white text-indigo-600 border-2 border-indigo-600 rounded-xl font-black uppercase text-xs flex items-center gap-2">
+              <Printer size={16}/> Print Job Sheet
+            </button>
             <button onClick={onClose} className="px-10 py-3 bg-slate-800 text-white rounded-xl font-black uppercase text-xs">Close</button>
             {isEditing && <button onClick={handleSave} disabled={isUploading} className="bg-indigo-600 text-white px-10 py-3 rounded-xl font-black uppercase text-xs">{isUploading ? 'Saving...' : 'Save Job'}</button>}
           </div>

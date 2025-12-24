@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
-import { X, Plus, PlusCircle, ArrowLeftRight, Trash2, Upload, ImageIcon, Send, Loader2 } from 'lucide-react';
-import { Unit, SizeBreakdown, Attachment } from '../../types';
-import { createOrder, uploadOrderAttachment, triggerOrderEmail } from '../../services/db';
+import React, { useState, useEffect } from 'react';
+import { X, Plus, PlusCircle, ArrowLeftRight, Trash2, Upload, ImageIcon, Send, Loader2, BookOpen } from 'lucide-react';
+import { Unit, SizeBreakdown, Attachment, Style } from '../../types';
+import { createOrder, uploadOrderAttachment, triggerOrderEmail, fetchStyles } from '../../services/db';
 
 interface LaunchOrderModalProps {
   isOpen: boolean;
@@ -15,10 +15,43 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
   const [isUploading, setIsUploading] = useState(false);
   const [useNumericSizes, setUseNumericSizes] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [newOrder, setNewOrder] = useState({ style_number: '', unit_id: 1, target_delivery_date: '', description: '', box_count: 0 });
+  const [availableStyles, setAvailableStyles] = useState<Style[]>([]);
+  const [newOrder, setNewOrder] = useState({ style_number: '', style_id: '', unit_id: 1, target_delivery_date: '', description: '', box_count: 0 });
   const [breakdown, setBreakdown] = useState<SizeBreakdown[]>([{ color: '', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }]);
 
+  useEffect(() => {
+    if (isOpen) {
+      fetchStyles().then(setAvailableStyles);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleStyleSelect = (styleId: string) => {
+    const style = availableStyles.find(s => s.id === styleId);
+    if (!style) {
+      setNewOrder({ ...newOrder, style_id: '', style_number: '' });
+      return;
+    }
+    
+    // Autofill Logic
+    setNewOrder({
+      ...newOrder,
+      style_id: style.id,
+      style_number: `${style.style_number} - ${style.style_text}`
+    });
+    
+    setUseNumericSizes(style.size_type === 'number');
+    
+    if (style.available_colors && style.available_colors.length > 0) {
+      const newBreakdown = style.available_colors
+        .filter(c => c.trim() !== '')
+        .map(color => ({
+          color, s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0
+        }));
+      if (newBreakdown.length > 0) setBreakdown(newBreakdown);
+    }
+  };
 
   const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
   const getTotalQuantity = (bd: SizeBreakdown[]) => bd.reduce((acc, row) => acc + getRowTotal(row), 0);
@@ -63,6 +96,32 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
           <button onClick={onClose} className="text-slate-300 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={32}/></button>
         </div>
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8">
+          
+          {/* Style Selection Top Dropdown */}
+          <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 flex flex-col md:flex-row items-center gap-6">
+            <div className="flex items-center gap-3 shrink-0">
+               <div className="p-3 bg-white rounded-xl text-indigo-600 shadow-sm border border-indigo-50">
+                 <BookOpen size={24}/>
+               </div>
+               <div>
+                 <h4 className="font-black text-indigo-900 text-sm uppercase tracking-tight leading-none">Auto-Fill from Database</h4>
+                 <p className="text-indigo-400 text-[10px] font-bold uppercase tracking-widest mt-1">Link this order to a technical style</p>
+               </div>
+            </div>
+            <div className="flex-1 w-full">
+              <select 
+                className="w-full bg-white border-2 border-indigo-200 rounded-xl px-5 py-4 text-sm font-black text-indigo-700 outline-none focus:ring-4 focus:ring-indigo-100 cursor-pointer shadow-sm"
+                value={newOrder.style_id}
+                onChange={e => handleStyleSelect(e.target.value)}
+              >
+                <option value="">-- [OPTIONAL] Select Style from Technical DB --</option>
+                {availableStyles.map(s => (
+                  <option key={s.id} value={s.id}>{s.style_number} - {s.style_text}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Style Reference</label><input required className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none" value={newOrder.style_number} onChange={e => setNewOrder({...newOrder, style_number: e.target.value})}/></div>
             <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Assign Facility</label><select className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none" value={newOrder.unit_id} onChange={e => setNewOrder({...newOrder, unit_id: parseInt(e.target.value)})}>{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
