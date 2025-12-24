@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Pencil, Trash2, Printer, Save, Loader2, Clock, Paperclip, Box, Image as ImageIcon, FileText, Download, ArrowLeftRight, Upload, BookOpen } from 'lucide-react';
 import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber, Style, StyleTemplate } from '../../types';
-import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleById, fetchStyleTemplate } from '../../services/db';
+import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleByNumber, fetchStyleTemplate } from '../../services/db';
 
 interface AdminOrderDetailsModalProps {
   order: Order;
@@ -51,9 +51,11 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
   const handlePrint = async () => {
     let techPackHtml = '';
     
-    if (order.style_id) {
+    // Virtual Link: Try to find style by number (extracted from reference)
+    const styleRefPart = order.style_number.split(' - ')[0].trim();
+    if (styleRefPart) {
         const [style, template] = await Promise.all([
-            fetchStyleById(order.style_id),
+            fetchStyleByNumber(styleRefPart),
             fetchStyleTemplate()
         ]);
         
@@ -78,7 +80,7 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
                     return `<div style="margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:10px; break-inside:avoid;"><div style="font-size:11px; font-weight:bold; color:#666; text-transform:uppercase; margin-bottom:4px;">${f}</div><div style="font-size:14px; font-weight:500;">${data.text || '---'}</div>${imagesHtml ? `<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">${imagesHtml}</div>` : ''}</div>`;
                 }).join('');
 
-                return `<div style="margin-top:40px; page-break-before:always;"><h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name} (Style DB)</h3><div style="padding:10px;">${variantMetaHtml}${fields}</div></div>`;
+                return `<div style="margin-top:40px; page-break-before:always;"><h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name} (Style DB Reference)</h3><div style="padding:10px;">${variantMetaHtml}${fields}</div></div>`;
             }).join('');
         }
     }
@@ -119,16 +121,14 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
         </div>
         <div className="flex-1 overflow-y-auto p-8 space-y-8">
           
-          {/* Linked Style Indicator */}
-          {order.style_id && (
-            <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex items-center gap-3">
-                <BookOpen size={20} className="text-indigo-600"/>
-                <div>
-                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Linked Style DB Asset</p>
-                  <p className="text-sm font-bold text-indigo-900 mt-1">This order is connected to the Technical Blueprint. Printing will include the master Tech Pack.</p>
-                </div>
-            </div>
-          )}
+          {/* Style Link Message */}
+          <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex items-center gap-3">
+              <BookOpen size={20} className="text-indigo-600"/>
+              <div>
+                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Style DB Reference</p>
+                <p className="text-sm font-bold text-indigo-900 mt-1">If the style reference matches the database, printing will automatically include the master tech pack.</p>
+              </div>
+          </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div className="p-5 bg-slate-50 rounded-2xl border">

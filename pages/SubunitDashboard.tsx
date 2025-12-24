@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, updateOrderStatus, generateBarcodes, fetchMaterialRequests, deleteMaterialRequest, triggerMaterialEmail, fetchOrderLogs, addOrderLog, fetchStyleById, fetchStyleTemplate } from '../services/db';
+import { fetchOrders, updateOrderStatus, generateBarcodes, fetchMaterialRequests, deleteMaterialRequest, triggerMaterialEmail, fetchOrderLogs, addOrderLog, fetchStyleByNumber, fetchStyleTemplate } from '../services/db';
 import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, MaterialStatus, formatOrderNumber } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
 import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, Eye, CheckCircle2, History, ListTodo, Archive, Clock, Search, Mail, Loader2, Info } from 'lucide-react';
@@ -161,10 +161,11 @@ export const SubunitDashboard: React.FC = () => {
   const handlePrintOrderSheet = async (order: Order) => {
       let techPackHtml = '';
       
-      // Fetch Tech Pack if style_id is available
-      if (order.style_id) {
+      // Attempt to find style by number (extracted from reference)
+      const styleRefPart = order.style_number.split(' - ')[0].trim();
+      if (styleRefPart) {
           const [style, template] = await Promise.all([
-              fetchStyleById(order.style_id),
+              fetchStyleByNumber(styleRefPart),
               fetchStyleTemplate()
           ]);
           
@@ -190,7 +191,7 @@ export const SubunitDashboard: React.FC = () => {
                   
                   return `
                     <div style="margin-top:40px; page-break-before:always;">
-                      <h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name} (Style Database Reference)</h3>
+                      <h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name} (Style DB Reference)</h3>
                       <div style="padding:10px;">${fields}</div>
                     </div>
                   `;
@@ -221,117 +222,25 @@ export const SubunitDashboard: React.FC = () => {
 
       const win = window.open('', 'PrintOrderSheet', 'width=1000,height=800');
       if (win) {
-          win.document.write(`<html><head><title>Job Sheet - ${formattedNo}</title><style>body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; font-size: 14px; color: #333; } .header { text-align: center; border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; } .brand { font-size: 42px; font-weight: 900; text-transform: uppercase; margin: 0; } .title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #444; } .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; } .box { padding: 15px; border: 2px solid #333; border-radius: 6px; } .label { font-size: 11px; text-transform: uppercase; color: #666; font-weight: bold; } .value { font-size: 18px; font-weight: bold; } table { width: 100%; border-collapse: collapse; margin-top: 20px; } th, td { border: 1px solid #333; padding: 12px; text-align: center; } th { background: #f0f0f0; font-weight: 800; text-transform: uppercase; } .section-title { font-size: 18px; font-weight: 900; border-bottom: 3px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; }</style></head><body><div class="header"><div class="brand">TINTURA SST</div><div class="title">Manufacturing Job Sheet</div></div><div class="grid"><div class="box"><span class="label">Order Number</span><div class="value">${formattedNo}</div></div><div class="box"><span class="label">Style Number</span><div class="value">${order.style_number}</div></div><div class="box"><span class="label">Total Quantity</span><div class="value">${order.quantity} PCS</div></div><div class="box"><span class="label">Planned Boxes</span><div class="value">${order.box_count || '---'}</div></div><div class="box"><span class="label">Delivery Deadline</span><div class="value">${order.target_delivery_date}</div></div></div><div class="section-title">Size Matrix Breakdown</div><table><thead><tr><th style="text-align:left;">Color</th>${headers.map(h => `<th>${h}</th>`).join('')}<th>Total</th></tr></thead><tbody>${breakdownRows}</tbody></table><div class="section-title">Production Requirements</div><div style="padding: 20px; border: 2px solid #333; min-height: 80px; background:#fcfcfc; border-radius:6px; font-size:16px;">${order.description || "No specific manufacturing notes provided."}</div>${attachmentHtml}${techPackHtml}<script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script></body></html>`);
+          win.document.write(`<html><head><title>Job Sheet - ${formattedNo}</title><style>body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; font-size: 14px; color: #333; } .header { text-align: center; border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; } .brand { font-size: 42px; font-weight: 900; text-transform: uppercase; margin: 0; } .title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #444; } .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; } .box { padding: 15px; border: 2px solid #333; border-radius: 6px; } .label { font-size: 11px; text-transform: uppercase; color: #666; font-weight: bold; } .value { font-size: 18px; font-weight: bold; } table { width: 100%; border-collapse: collapse; margin-top: 20px; } th, td { border: 1px solid #333; padding: 12px; text-align: center; } th { background: #f0f0f0; font-weight: 800; text-transform: uppercase; } .section-title { font-size: 18px; font-weight: 900; border-bottom: 3px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; }</style></head><body><div class="header"><div class="brand">TINTURA SST</div><div class="title">Manufacturing Job Sheet</div></div><div class="grid"><div class="box"><span class="label">Order Number</span><div class="value">${formattedNo}</div></div><div class="box"><span class="label">Style Reference</span><div class="value">${order.style_number}</div></div><div class="box"><span class="label">Total Quantity</span><div class="value">${order.quantity} PCS</div></div><div class="box"><span class="label">Planned Boxes</span><div class="value">${order.box_count || '---'}</div></div><div class="box"><span class="label">Delivery Deadline</span><div class="value">${order.target_delivery_date}</div></div></div><div class="section-title">Size Matrix Breakdown</div><table><thead><tr><th style="text-align:left;">Color</th>${headers.map(h => `<th>${h}</th>`).join('')}<th>Total</th></tr></thead><tbody>${breakdownRows}</tbody></table><div class="section-title">Production Requirements</div><div style="padding: 20px; border: 2px solid #333; min-height: 80px; background:#fcfcfc; border-radius:6px; font-size:16px;">${order.description || "No specific manufacturing notes provided."}</div>${attachmentHtml}${techPackHtml}<script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script></body></html>`);
           win.document.close();
       }
   };
-
+  
+  // Remaining implementation stays the same (Receipt print, Bulk update, etc.)
+  // Included below for completeness of the file content
+  
   const handlePrintAccessoriesReceipt = (order: Order, reqs: MaterialRequest[]) => {
       const formattedNo = formatOrderNumber(order);
       const win = window.open('', 'OrderReceipt', 'width=1000,height=800');
       if (win) {
-          const page1Rows = reqs.map((req, idx) => `
-            <tr>
-                <td style="text-align:center;">${idx + 1}</td>
-                <td>${req.material_content}</td>
-                <td style="text-align:center;">${req.unit || 'Nos'}</td>
-                <td style="text-align:right; font-weight:bold;">${req.quantity_requested}</td>
-            </tr>
-          `).join('');
-
+          const page1Rows = reqs.map((req, idx) => `<tr><td style="text-align:center;">${idx + 1}</td><td>${req.material_content}</td><td style="text-align:center;">${req.unit || 'Nos'}</td><td style="text-align:right; font-weight:bold;">${req.quantity_requested}</td></tr>`).join('');
           const page2Rows = reqs.map((req, idx) => {
               const balance = req.quantity_requested - req.quantity_approved;
-              return `
-                <tr>
-                    <td style="text-align:center;">${idx + 1}</td>
-                    <td>${req.material_content}</td>
-                    <td style="text-align:right;">${req.quantity_requested}</td>
-                    <td style="text-align:right; font-weight:bold; color:green;">${req.quantity_approved}</td>
-                    <td style="text-align:right; font-weight:bold; color:${balance > 0 ? 'red' : 'black'};">${balance}</td>
-                    <td style="text-align:center; font-size:10px; text-transform:uppercase;">${req.status.replace('_', ' ')}</td>
-                </tr>
-              `;
+              return `<tr><td style="text-align:center;">${idx + 1}</td><td>${req.material_content}</td><td style="text-align:right;">${req.quantity_requested}</td><td style="text-align:right; font-weight:bold; color:green;">${req.quantity_approved}</td><td style="text-align:right; font-weight:bold; color:${balance > 0 ? 'red' : 'black'};">${balance}</td><td style="text-align:center; font-size:10px; text-transform:uppercase;">${req.status.replace('_', ' ')}</td></tr>`;
           }).join('');
-
-          const headerHTML = `
-            <div class="header">
-                <div class="brand">TINTURA SST</div>
-                <div class="title">ACCESSORIES REQUIREMENT RECEIPT</div>
-                <div class="meta">
-                    ORDER NO: ${formattedNo} &nbsp;|&nbsp; 
-                    STYLE: ${order.style_number} &nbsp;|&nbsp; 
-                    DATE: ${new Date().toLocaleDateString()}
-                </div>
-            </div>
-          `;
-
-          win.document.write(`
-            <html>
-            <head>
-                <title>Accessories Receipt - ${formattedNo}</title>
-                <style>
-                    @media print { 
-                        .page-break { page-break-before: always; } 
-                        body { -webkit-print-color-adjust: exact; }
-                    }
-                    body { font-family: 'Arial', sans-serif; padding: 40px; color: #333; }
-                    .header { text-align: center; border-bottom: 3px solid #000; margin-bottom: 25px; padding-bottom: 15px; }
-                    .brand { font-size: 24px; font-weight: 900; margin-bottom: 5px; letter-spacing: 1px; }
-                    .title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; }
-                    .meta { font-size: 16px; font-weight: 800; background: #eee; padding: 10px; border: 1px solid #000; text-align: center; }
-                    .page-title { font-size: 14px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; text-align:left; border-left: 5px solid #000; padding-left: 10px; }
-                    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
-                    th, td { border: 1px solid #ccc; padding: 8px; }
-                    th { background: #f4f4f4; text-transform: uppercase; }
-                </style>
-            </head>
-            <body>
-                <!-- PAGE 1 -->
-                ${headerHTML}
-                <div class="page-title">Page 1: Request Sheet</div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th width="50">S.No</th>
-                            <th>Material Description</th>
-                            <th width="80">Unit</th>
-                            <th width="100" style="text-align:right">Total Requested</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${page1Rows}
-                    </tbody>
-                </table>
-                <div style="text-align:center; font-size:10px; margin-top:20px;">-- Verified By Production --</div>
-
-                <div class="page-break"></div>
-
-                <!-- PAGE 2 -->
-                ${headerHTML}
-                <div class="page-title">Page 2: Approval & Balance Sheet</div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th width="50">S.No</th>
-                            <th>Material Description</th>
-                            <th width="80" style="text-align:right">Req</th>
-                            <th width="80" style="text-align:right">Approved</th>
-                            <th width="80" style="text-align:right">Balance</th>
-                            <th width="100">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${page2Rows}
-                    </tbody>
-                </table>
-                <div style="text-align:center; font-size:10px; margin-top:20px;">-- Approved By Materials Dept --</div>
-
-                <script>
-                    window.onload = () => { setTimeout(() => window.print(), 500); };
-                </script>
-            </body>
-            </html>
-          `);
+          const headerHTML = `<div class="header"><div class="brand">TINTURA SST</div><div class="title">ACCESSORIES REQUIREMENT RECEIPT</div><div class="meta">ORDER NO: ${formattedNo} &nbsp;|&nbsp; STYLE: ${order.style_number} &nbsp;|&nbsp; DATE: ${new Date().toLocaleDateString()}</div></div>`;
+          win.document.write(`<html><head><title>Accessories Receipt - ${formattedNo}</title><style>@media print { .page-break { page-break-before: always; } body { -webkit-print-color-adjust: exact; } } body { font-family: 'Arial', sans-serif; padding: 40px; color: #333; } .header { text-align: center; border-bottom: 3px solid #000; margin-bottom: 25px; padding-bottom: 15px; } .brand { font-size: 24px; font-weight: 900; margin-bottom: 5px; letter-spacing: 1px; } .title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; } .meta { font-size: 16px; font-weight: 800; background: #eee; padding: 10px; border: 1px solid #000; text-align: center; } .page-title { font-size: 14px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; text-align:left; border-left: 5px solid #000; padding-left: 10px; } table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; } th, td { border: 1px solid #ccc; padding: 8px; } th { background: #f4f4f4; text-transform: uppercase; }</style></head><body>${headerHTML}<div class="page-title">Page 1: Request Sheet</div><table><thead><tr><th width="50">S.No</th><th>Material Description</th><th width="80">Unit</th><th width="100" style="text-align:right">Total Requested</th></tr></thead><tbody>${page1Rows}</tbody></table><div style="text-align:center; font-size:10px; margin-top:20px;">-- Verified By Production --</div><div class="page-break"></div>${headerHTML}<div class="page-title">Page 2: Approval & Balance Sheet</div><table><thead><tr><th width="50">S.No</th><th>Material Description</th><th width="80" style="text-align:right">Req</th><th width="80" style="text-align:right">Approved</th><th width="80" style="text-align:right">Balance</th><th width="100">Status</th></tr></thead><tbody>${page2Rows}</tbody></table><div style="text-align:center; font-size:10px; margin-top:20px;">-- Approved By Materials Dept --</div><script>window.onload = () => { setTimeout(() => window.print(), 500); };</script></body></html>`);
           win.document.close();
       }
   };
@@ -357,13 +266,7 @@ export const SubunitDashboard: React.FC = () => {
         </div>
         <div className="flex flex-col md:flex-row gap-3 items-center">
             <div className="relative w-full md:w-80">
-                <input 
-                  type="text" 
-                  placeholder="Search by Order # or Style..." 
-                  className="pl-11 pr-4 py-3 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full bg-white text-slate-900 shadow-sm transition-all" 
-                  value={searchTerm} 
-                  onChange={(e) => setSearchTerm(e.target.value)} 
-                />
+                <input type="text" placeholder="Search by Order # or Style..." className="pl-11 pr-4 py-3 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full bg-white text-slate-900 shadow-sm transition-all" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 <Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
             </div>
             <button onClick={handleOpenMaterialHistory} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl flex items-center gap-2 font-bold hover:bg-slate-50 shadow-sm transition-all active:scale-95"><Archive size={20} className="text-indigo-600"/><span>Req History</span></button>
@@ -410,9 +313,7 @@ export const SubunitDashboard: React.FC = () => {
                         <StatusBadge status={order.status} />
                         {order.qc_notes && (
                           <div className="mt-2 p-2 bg-red-50 rounded-lg border border-red-100">
-                            <div className="text-[10px] font-black text-red-600 uppercase flex items-center gap-1 mb-0.5">
-                              <AlertTriangle size={12}/> QC Feedback
-                            </div>
+                            <div className="text-[10px] font-black text-red-600 uppercase flex items-center gap-1 mb-0.5"><AlertTriangle size={12}/> QC Feedback</div>
                             <div className="text-xs text-red-700 font-medium line-clamp-1">{order.qc_notes}</div>
                           </div>
                         )}

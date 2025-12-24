@@ -16,7 +16,8 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
   const [useNumericSizes, setUseNumericSizes] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [availableStyles, setAvailableStyles] = useState<Style[]>([]);
-  const [newOrder, setNewOrder] = useState({ style_number: '', style_id: '', unit_id: 1, target_delivery_date: '', description: '', box_count: 0 });
+  const [selectedStyleId, setSelectedStyleId] = useState<string>('');
+  const [newOrder, setNewOrder] = useState({ style_number: '', unit_id: 1, target_delivery_date: '', description: '', box_count: 0 });
   const [breakdown, setBreakdown] = useState<SizeBreakdown[]>([{ color: '', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }]);
 
   useEffect(() => {
@@ -28,16 +29,16 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
   if (!isOpen) return null;
 
   const handleStyleSelect = (styleId: string) => {
+    setSelectedStyleId(styleId);
     const style = availableStyles.find(s => s.id === styleId);
     if (!style) {
-      setNewOrder({ ...newOrder, style_id: '', style_number: '' });
+      setNewOrder({ ...newOrder, style_number: '' });
       return;
     }
     
-    // Autofill Logic
+    // Autofill Logic: Reference = <style number> - <short description>
     setNewOrder({
       ...newOrder,
-      style_id: style.id,
       style_number: `${style.style_number} - ${style.style_text}`
     });
     
@@ -111,7 +112,7 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
             <div className="flex-1 w-full">
               <select 
                 className="w-full bg-white border-2 border-indigo-200 rounded-xl px-5 py-4 text-sm font-black text-indigo-700 outline-none focus:ring-4 focus:ring-indigo-100 cursor-pointer shadow-sm"
-                value={newOrder.style_id}
+                value={selectedStyleId}
                 onChange={e => handleStyleSelect(e.target.value)}
               >
                 <option value="">-- [OPTIONAL] Select Style from Technical DB --</option>

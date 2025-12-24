@@ -13,6 +13,12 @@ export const fetchStyles = async (): Promise<Style[]> => {
   return data as Style[];
 };
 
+export const fetchStyleByNumber = async (styleNum: string): Promise<Style | null> => {
+    const { data, error } = await supabase.from('styles').select('*').eq('style_number', styleNum).maybeSingle();
+    if (error || !data) return null;
+    return data as Style;
+};
+
 export const fetchStyleById = async (id: string): Promise<Style | null> => {
     const { data, error } = await supabase.from('styles').select('*').eq('id', id).single();
     if (error || !data) return null;
@@ -106,7 +112,6 @@ export const createOrder = async (order: Partial<Order>): Promise<{ data: Order 
         order_no: orderNo,
         unit_id: order.unit_id,
         style_number: order.style_number,
-        style_id: order.style_id,
         quantity: order.quantity,
         size_breakdown: order.size_breakdown,
         description: order.description,
@@ -139,7 +144,7 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus, no
 
 export const updateOrderDetails = async (orderId: string, updates: Partial<Order>): Promise<{ success: boolean; error: string | null }> => {
     const payload: any = {};
-    const allowedKeys = ['style_number', 'style_id', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count'];
+    const allowedKeys = ['style_number', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count'];
     allowedKeys.forEach(k => { if ((updates as any)[k] !== undefined) payload[k] = (updates as any)[k]; });
     const { error } = await supabase.from('orders').update(payload).eq('id', orderId);
     if (error) return { success: false, error: error.message };
@@ -186,8 +191,6 @@ export const approveMaterialRequest = async (id: string, qtyApprovedNow: number,
 export const fetchBarcodes = async (statusFilter?: BarcodeStatus): Promise<Barcode[]> => {
     let query = supabase.from('barcodes').select('*');
     if (statusFilter) query = query.eq('status', statusFilter);
-    const { data_res, error_res } = await query;
-    if (error_res) return [];
     const { data, error } = await query;
     if (error || !data) return [];
     return data as Barcode[];
