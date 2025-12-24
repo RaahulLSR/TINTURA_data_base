@@ -83,8 +83,35 @@ export interface Order {
   status: OrderStatus;
   created_at?: string;
   size_format?: 'standard' | 'numeric';
-  
 }
+
+// --- Style Database Types ---
+export interface TechPackItem {
+  text: string;
+  attachments: Attachment[];
+}
+
+export interface StyleCategory {
+  name: string;
+  fields: string[];
+}
+
+export interface Style {
+  id: string;
+  style_number: string;
+  category: string;
+  packing_type: string;
+  pcs_per_box: number;
+  style_text: string;
+  tech_pack: Record<string, Record<string, TechPackItem>>;
+  created_at?: string;
+}
+
+export interface StyleTemplate {
+  id: number;
+  config: StyleCategory[];
+}
+// --- End Style Database Types ---
 
 export interface MaterialRequest {
   id: string;
@@ -164,23 +191,12 @@ export const getNextBarcodeStatus = (current: BarcodeStatus): BarcodeStatus | nu
   }
 };
 
-/**
- * Formats the internal order number for display.
- * Internal: ORD-01234
- * Style: ST102 - Desc
- * Result: ORD-ST102-01234
- */
 export const formatOrderNumber = (order: Partial<Order>): string => {
   if (!order.order_no) return 'ORD-NEW';
-  
-  // Extract serial numeric part from internal order_no (e.g. ORD-01234 -> 01234)
   const numericMatch = order.order_no.match(/ORD-(\d+)/);
   const serial = numericMatch ? numericMatch[1] : order.order_no;
-  
-  // Extract style part from style_number (e.g. ST102 - Desc -> ST102)
   const stylePart = order.style_number 
     ? order.style_number.split('-')[0].trim() 
     : 'STYLE';
-    
   return `ORD-${stylePart}-${serial}`;
 };

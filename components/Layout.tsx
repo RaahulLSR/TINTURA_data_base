@@ -13,7 +13,8 @@ import {
   Menu,
   X,
   Layers,
-  UserCircle
+  UserCircle,
+  BookOpen
 } from 'lucide-react';
 
 interface AuthContextType {
@@ -36,7 +37,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AppUser | null>(null);
   const navigate = useNavigate();
 
-  // Check for stored session on load
   useEffect(() => {
     const stored = localStorage.getItem('tintura_user');
     if (stored) {
@@ -86,14 +86,13 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // If not authenticated, we don't render the layout (the wrapper in App.tsx handles redirect)
   if (!isAuthenticated || !user) {
     return <>{children}</>;
   }
 
-  // Define All Routes
   const allNavItems = [
     { role: UserRole.ADMIN, to: '/', icon: <LayoutDashboard size={20} />, label: 'Admin HQ' },
+    { role: UserRole.ADMIN, to: '/styles', icon: <BookOpen size={20} />, label: 'Style DB' },
     { role: UserRole.SUB_UNIT, to: '/subunit', icon: <Factory size={20} />, label: 'Sub-Unit Ops' },
     { role: UserRole.MATERIALS, to: '/materials', icon: <Archive size={20} />, label: 'Materials' },
     { role: UserRole.QC, to: '/qc', icon: <ClipboardCheck size={20} />, label: 'QC Department' },
@@ -101,27 +100,15 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     { role: UserRole.SALES, to: '/sales', icon: <ShoppingCart size={20} />, label: 'Sales & POS' },
   ];
 
-  // Filter based on Role
   const navItems = allNavItems.filter(item => {
-    if (user.role === UserRole.ADMIN) return true; // Admin sees all
-    
-    // Inventory role sees Inventory AND Sales
-    if (user.role === UserRole.INVENTORY) {
-        return item.role === UserRole.INVENTORY || item.role === UserRole.SALES;
-    }
-
-    // Sub Unit role sees Subunit Ops, Inventory, AND Sales
-    if (user.role === UserRole.SUB_UNIT) {
-        return item.role === UserRole.SUB_UNIT || item.role === UserRole.INVENTORY || item.role === UserRole.SALES;
-    }
-
-    // Others see only their specific page (QC sees QC, Materials sees Materials)
+    if (user.role === UserRole.ADMIN) return true;
+    if (user.role === UserRole.INVENTORY) return item.role === UserRole.INVENTORY || item.role === UserRole.SALES;
+    if (user.role === UserRole.SUB_UNIT) return item.role === UserRole.SUB_UNIT || item.role === UserRole.INVENTORY || item.role === UserRole.SALES || item.to === '/styles';
     return item.role === user.role;
   });
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-900">
-      {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
         <div className="flex flex-col p-6 border-b border-slate-800">
           <div className="flex items-center justify-between mb-2">
@@ -141,19 +128,11 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           </div>
           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold ml-1">A Product of LSR</p>
         </div>
-
         <nav className="p-4 space-y-1">
           {navItems.map((item) => (
-             <SidebarItem 
-               key={item.to} 
-               to={item.to} 
-               icon={item.icon} 
-               label={item.label} 
-               active={location.pathname === item.to}
-             />
+             <SidebarItem key={item.to} to={item.to} icon={item.icon} label={item.label} active={location.pathname === item.to} />
           ))}
         </nav>
-
         <div className="absolute bottom-0 w-full p-4 border-t border-slate-800 bg-slate-900">
           <div className="flex items-center space-x-3 text-slate-400 mb-4">
              <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-indigo-400 border border-slate-700">
@@ -164,28 +143,19 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                <p className="text-xs text-indigo-400 capitalize">{user.role.replace(/_/g, ' ').toLowerCase()}</p>
              </div>
           </div>
-          
-          <button 
-            onClick={logout}
-            className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2 rounded-lg transition-colors text-sm font-medium"
-          >
+          <button onClick={logout} className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2 rounded-lg transition-colors text-sm font-medium">
             <LogOut size={16}/> Sign Out
           </button>
         </div>
       </aside>
-
-      {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="bg-white shadow-sm border-b border-slate-200 p-4 md:hidden flex items-center justify-between">
-            <button onClick={() => setMobileMenuOpen(true)} className="text-slate-600">
-               <Menu size={24} />
-            </button>
+            <button onClick={() => setMobileMenuOpen(true)} className="text-slate-600"><Menu size={24} /></button>
             <span className="font-bold text-slate-800 flex items-center gap-2">
                 <Layers size={18} className="text-indigo-600"/> Tintura <span className="italic text-indigo-600">SST</span>
             </span>
             <div className="w-6" /> 
         </header>
-
         <main className="flex-1 overflow-auto p-4 md:p-8">
           {children}
         </main>

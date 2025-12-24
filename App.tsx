@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, Layout, useAuth } from './components/Layout';
@@ -7,10 +8,10 @@ import { MaterialsDashboard } from './pages/MaterialsDashboard';
 import { QCDashboard } from './pages/QCDashboard';
 import { InventoryDashboard } from './pages/InventoryDashboard';
 import { SalesDashboard } from './pages/SalesDashboard';
+import { StyleDatabase } from './pages/StyleDatabase';
 import { Login } from './pages/Login';
 import { UserRole } from './types';
 
-// Protected Route Wrapper
 const ProtectedRoute: React.FC<{ children: React.ReactNode, allowedRoles?: UserRole[] }> = ({ children, allowedRoles }) => {
     const { isAuthenticated, user } = useAuth();
     const location = useLocation();
@@ -20,14 +21,12 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode, allowedRoles?: UserR
     }
 
     if (allowedRoles) {
-        // Special case for Inventory role accessing Sales page
         const effectiveRoles = [...allowedRoles];
         if (allowedRoles.includes(UserRole.INVENTORY)) {
              effectiveRoles.push(UserRole.SALES);
         }
 
         if (!effectiveRoles.includes(user.role) && user.role !== UserRole.ADMIN) {
-            // Redirect to their home page based on role if they try to access unauthorized page
             if (user.role === UserRole.SUB_UNIT) return <Navigate to="/subunit" replace />;
             if (user.role === UserRole.MATERIALS) return <Navigate to="/materials" replace />;
             if (user.role === UserRole.INVENTORY) return <Navigate to="/inventory" replace />;
@@ -47,6 +46,12 @@ const AppRoutes = () => {
             <Route path="/" element={
                 <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
                     <AdminDashboard />
+                </ProtectedRoute>
+            } />
+
+            <Route path="/styles" element={
+                <ProtectedRoute allowedRoles={[UserRole.ADMIN, UserRole.SUB_UNIT, UserRole.QC, UserRole.MATERIALS]}>
+                    <StyleDatabase />
                 </ProtectedRoute>
             } />
             
