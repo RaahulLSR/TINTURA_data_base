@@ -1,9 +1,9 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { fetchStyles, upsertStyle, fetchStyleTemplate, updateStyleTemplate, deleteStyle, uploadOrderAttachment } from '../services/db';
 import { Style, StyleTemplate, StyleCategory, TechPackItem, Attachment, TechPackVariant, TechPackSizeVariant, ConsumptionType } from '../types';
 import { 
-  Plus, Search, Grid, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, Settings, ArrowLeftRight, Loader2, Download, Layers, BookOpen, Palette, Ruler, ChevronDown, ChevronUp, ChevronRight, Info, ArrowLeft, ExternalLink, Split, Scan, Calculator
+  Plus, Search, Grid, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, Settings, ArrowLeftRight, Loader2, Download, Layers, BookOpen, Palette, Ruler, ChevronDown, ChevronUp, ChevronRight, Info, ArrowLeft, ExternalLink, Split, Scan, Calculator, CheckSquare, Square, Filter, ToggleLeft, ToggleRight, FilePlus, RefreshCcw, FileUp, Table
 } from 'lucide-react';
 
 // --- Sub-components ---
@@ -52,7 +52,7 @@ const ConsumptionInput: React.FC<ConsumptionInputProps> = ({ type, value, onChan
         className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-xs font-black text-indigo-700 bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
         value={value || ''}
         onChange={e => onChange(type, parseFloat(e.target.value) || 0)}
-        placeholder="Value"
+        placeholder="Val"
       />
       <button type="button" onClick={onClear} className="text-slate-300 hover:text-red-500 transition-colors">
         <X size={14}/>
@@ -444,6 +444,35 @@ export const StyleDatabase: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [garmentTypeOptions, setGarmentTypeOptions] = useState(['Pant', 'Trackpant', 'Shorts', 'T-shirt']);
   const [demographicOptions, setDemographicOptions] = useState(['Men', 'Boys']);
+  
+  // Bulk Mode States
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [selectedStyleIds, setSelectedStyleIds] = useState<string[]>([]);
+  const [isBulkUpdateModalOpen, setIsBulkUpdateModalOpen] = useState(false);
+  const [isBulkImportModalOpen, setIsBulkImportModalOpen] = useState(false);
+  const [bulkImportData, setBulkImportData] = useState<any[]>([]);
+  const bulkFileRef = useRef<HTMLInputElement>(null);
+  
+  // Revised Bulk Update Form Structure
+  const [bulkUpdateMeta, setBulkUpdateMeta] = useState<{
+    target: 'global' | 'color' | 'size';
+    colorFilter: string[];
+    sizeFilter: string[];
+    strategy: 'overwrite' | 'append';
+  }>({
+    target: 'global',
+    colorFilter: [],
+    sizeFilter: [],
+    strategy: 'overwrite'
+  });
+
+  const [bulkFieldValues, setBulkFieldValues] = useState<Record<string, {
+    isEnabled: boolean;
+    text: string;
+    attachments: Attachment[];
+    consumption_type?: ConsumptionType;
+    consumption_val?: number;
+  }>>({});
 
   const loadData = async () => {
     const [s, t] = await Promise.all([fetchStyles(), fetchStyleTemplate()]);
@@ -453,11 +482,26 @@ export const StyleDatabase: React.FC = () => {
     const existingDemos = Array.from(new Set([...demographicOptions, ...s.map(style => style.demographic).filter(Boolean) as string[]]));
     setGarmentTypeOptions(existingGarments);
     setDemographicOptions(existingDemos);
+    
+    // Initialize bulk fields
+    if (t) {
+      const initialValues: Record<string, any> = {};
+      t.config.forEach(cat => {
+        cat.fields.forEach(f => {
+          initialValues[`${cat.name}|${f}`] = { isEnabled: false, text: '', attachments: [] };
+        });
+      });
+      setBulkFieldValues(initialValues);
+    }
   };
 
   useEffect(() => { loadData(); }, []);
 
-  const filteredStyles = styles.filter(s => s.style_number.toLowerCase().includes(searchTerm.toLowerCase()) || s.category.toLowerCase().includes(searchTerm.toLowerCase()) || (s.garment_type && s.garment_type.toLowerCase().includes(searchTerm.toLowerCase())));
+  const filteredStyles = styles.filter(s => 
+    s.style_number.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    s.category.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    (s.garment_type && s.garment_type.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
 
   const handleSaveStyle = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -470,15 +514,25 @@ export const StyleDatabase: React.FC = () => {
     if (!error) { setIsEditing(null); loadData(); } else { alert(error); }
   };
 
-  const handleCopyFrom = (sourceStyleId: string) => {
-    const source = styles.find(s => s.id === sourceStyleId);
-    if (!source || !isEditing) return;
-    if (confirm(`Overwrite data from ${source.style_number}?`)) {
-      setIsEditing({ ...isEditing, tech_pack: JSON.parse(JSON.stringify(source.tech_pack)), category: source.category, packing_type: source.packing_type, pcs_per_box: source.pcs_per_box, style_text: source.style_text, garment_type: source.garment_type, demographic: source.demographic, available_colors: source.available_colors ? [...source.available_colors] : [], available_sizes: source.available_sizes ? [...source.available_sizes] : [], size_type: source.size_type });
-    }
+  const handleNewStyle = () => {
+    setIsEditing({ 
+      id: '', style_number: '', category: 'Casuals', packing_type: 'pouch', pcs_per_box: 0, 
+      style_text: '', garment_type: 'T-shirt', demographic: 'Men', 
+      available_colors: [''], available_sizes: ['S', 'M', 'L', 'XL', 'XXL', '3XL'], 
+      size_type: 'letter', tech_pack: {} 
+    });
   };
 
-  const handleDelete = async (id: string) => { if (confirm("Permanently delete this style?")) { await deleteStyle(id); loadData(); } };
+  const handleCopyStyle = (sourceStyle: Style) => {
+    const copy = JSON.parse(JSON.stringify(sourceStyle));
+    copy.id = ''; // Clear ID for new entry
+    copy.style_number = `${sourceStyle.style_number} (Copy)`;
+    setIsEditing(copy);
+  };
+
+  const handleDelete = async (id: string) => { 
+    if (confirm("Permanently delete this style?")) { await deleteStyle(id); loadData(); } 
+  };
 
   const handleFileUpload = async (category: string, field: string, files: FileList | null, vIdx?: number, svIdx?: number) => {
     if (!files || !isEditing) return;
@@ -504,67 +558,245 @@ export const StyleDatabase: React.FC = () => {
     setIsUploading(false);
   };
 
-  const handlePrint = (style: Style) => {
-    const win = window.open('', 'TechPack', 'width=1200,height=900');
-    if (!win) return;
-    
-    const categoriesHtml = template?.config.filter(c => c.name !== "General Info").map(cat => {
-      const isPreProd = cat.name.toLowerCase().includes('pre production');
-      const variantMetaHtml = isPreProd ? `<div style="background:#f1f5f9; padding:25px; border-radius:12px; margin-bottom:30px; display:grid; grid-template-columns:1fr 1fr; gap:30px; border:2px solid #e2e8f0;"><div><span style="font-size:12px; font-weight:900; color:#64748b; text-transform:uppercase; letter-spacing:1px;">Blueprint Colours</span><br/><strong style="font-size:20px; color:#1e293b;">${style.available_colors?.join(', ') || '---'}</strong></div><div><span style="font-size:12px; font-weight:900; color:#64748b; text-transform:uppercase; letter-spacing:1px;">Size Format</span><br/><strong style="font-size:20px; color:#1e293b;">${style.available_sizes?.join(', ') || '---'} (${style.size_type})</strong></div></div>` : '';
+  const handleCSVImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-      const fields = cat.fields.map(f => {
-        const item = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
-        let contentHtml = '';
-        
-        if (item.variants) {
-          contentHtml = item.variants.map(v => {
-            let sizeHtml = '';
-            if (v.sizeVariants) {
-              sizeHtml = `<div style="margin-top:20px; display:grid; grid-template-columns:1fr; gap:15px;">${v.sizeVariants.map(sv => `
-                <div style="background:#fff; border:1px solid #e2e8f0; border-left:8px solid #2563eb; padding:25px; border-radius:15px;">
-                  <div style="margin-bottom:15px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center;">
-                    <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                      ${sv.sizes.map(sz => `<span style="background:#2563eb; color:#fff; display:inline-block; padding:6px 14px; border-radius:8px; font-weight:900; font-size:20px;">SIZE: ${sz}</span>`).join('')}
-                    </div>
-                    ${sv.consumption_type ? `<div style="background:#f1f5f9; color:#2563eb; padding:5px 15px; border-radius:8px; font-weight:900; font-size:18px; border:2px solid #2563eb;">${sv.consumption_val} ${sv.consumption_type === 'items_per_pc' ? 'ITEMS / PC' : 'PCS / ITEM'}</div>` : ''}
-                  </div>
-                  <div style="font-size:24px; font-weight:900; color:#1e293b; line-height:1.4;">${sv.text || '---'}</div>
-                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:20px;">
-                    ${sv.attachments.filter(a => a.type === 'image').map(img => `<img src="${img.url}" style="width:100%; border-radius:12px; border:2px solid #eee;" />`).join('')}
-                  </div>
-                </div>
-              `).join('')}</div>`;
-            }
-            return `<div style="border:3px solid #e2e8f0; padding:30px; border-radius:24px; margin-top:30px; background:#f8fafc; break-inside:avoid;">
-               <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
-                 <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                    ${v.colors.map(c => `<span style="background:#1e293b; color:#fff; font-size:11px; font-weight:900; padding:6px 14px; border-radius:8px; text-transform:uppercase; letter-spacing:1px;">${c}</span>`).join('')} 
-                    ${v.colors.length === 0 ? '<span style="font-style:italic; font-size:14px; color:#64748b;">Global Variant</span>' : ''}
-                 </div>
-                 ${!v.sizeVariants && v.consumption_type ? `<div style="background:#fff; color:#1e293b; padding:5px 15px; border-radius:8px; font-weight:900; font-size:18px; border:2px solid #1e293b;">${v.consumption_val} ${v.consumption_type === 'items_per_pc' ? 'ITEMS / PC' : 'PCS / ITEM'}</div>` : ''}
-               </div>
-               <div style="font-size:28px; color:#1e293b; font-weight:900; line-height:1.3; margin-bottom:15px;">${v.text || '---'}</div>
-               <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:20px;">${v.attachments.filter(a => a.type === 'image').map(img => `<img src="${img.url}" style="width:100%; border-radius:16px; border:2px solid #eee;" />`).join('')}</div>
-               ${sizeHtml}
-            </div>`;
-          }).join('');
-        } else {
-          contentHtml = `
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; background:#f8fafc; padding:30px; border-radius:24px; border:3px solid #e2e8f0; gap:30px;">
-              <div style="font-size:26px; font-weight:900; color:#1e293b; line-height:1.3; flex:1;">${item.text || '---'}</div>
-              ${item.consumption_type ? `<div style="background:#1e293b; color:#fff; padding:10px 20px; border-radius:12px; font-weight:900; font-size:22px; white-space:nowrap;">${item.consumption_val} <br/><small style="font-size:12px; opacity:0.8;">${item.consumption_type === 'items_per_pc' ? 'ITEMS / PC' : 'PCS / ITEM'}</small></div>` : ''}
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:25px; margin-top:25px;">${item.attachments.filter(a => a.type === 'image').map(img => `<div style="border:2px solid #eee; padding:15px; border-radius:20px; text-align:center;"><img src="${img.url}" style="max-width:100%; max-height:600px; border-radius:12px;" /></div>`).join('')}</div>
-          `;
-        }
-        
-        return `<div style="margin-bottom:50px; border-bottom:2px solid #e2e8f0; padding-bottom:40px; break-inside:avoid;"><div style="font-size:16px; font-weight:900; color:#64748b; text-transform:uppercase; margin-bottom:16px; letter-spacing:3px; display:flex; align-items:center; gap:12px;"><div style="width:10px; height:10px; background:#4f46e5; border-radius:50%;"></div>${f}</div>${contentHtml}</div>`;
-      }).join('');
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      const lines = text.split('\n');
+      const headers = lines[0].split(',').map(h => h.trim());
       
-      return `<div style="margin-top:70px; page-break-before:always;"><h3 style="background:#1e293b; color:#fff; padding:20px 30px; font-size:22px; text-transform:uppercase; letter-spacing:5px; border-radius:16px; font-weight:900;">${cat.name}</h3><div style="padding:30px 15px;">${variantMetaHtml}${fields}</div></div>`;
+      const parsedData = lines.slice(1).map(line => {
+        const values = line.split(',').map(v => v.trim());
+        if (values.length < headers.length) return null;
+        const entry: any = {};
+        headers.forEach((header, i) => entry[header] = values[i]);
+        return entry;
+      }).filter(Boolean);
+
+      setBulkImportData(parsedData);
+      setIsBulkImportModalOpen(true);
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset
+  };
+
+  const handleExecuteBulkImport = async () => {
+    setIsUploading(true);
+    try {
+      for (const row of bulkImportData) {
+        // Columns: Style No., GarmentType, Demographic, Category, Short description, Available colours, size variants, fabric
+        const newStyle: Partial<Style> = {
+          style_number: row['Style No.'] || 'NEW-STYLE',
+          garment_type: row['GarmentType'] || 'T-shirt',
+          demographic: row['Demographic'] || 'Men',
+          category: row['Category'] || 'Casuals',
+          style_text: row['Short description'] || '',
+          available_colors: (row['Available colours'] || '').split(';').map((s: string) => s.trim()).filter(Boolean),
+          available_sizes: (row['size variants'] || '').split(';').map((s: string) => s.trim()).filter(Boolean),
+          packing_type: 'pouch',
+          pcs_per_box: 1,
+          tech_pack: {},
+          size_type: 'letter'
+        };
+
+        // If fabric is provided, try to place it in Fabrication or style text
+        if (row['fabric']) {
+          const fabricText = `Fabric: ${row['fabric']}`;
+          newStyle.style_text = newStyle.style_text ? `${newStyle.style_text}\n${fabricText}` : fabricText;
+        }
+
+        await upsertStyle(newStyle);
+      }
+      alert(`Successfully created ${bulkImportData.length} new styles.`);
+      setIsBulkImportModalOpen(false);
+      loadData();
+    } catch (err) {
+      alert("Import failed: " + err);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleBulkUpdate = async () => {
+    if (selectedStyleIds.length === 0) return;
+    setIsUploading(true);
+    
+    try {
+      const selectedStyles = styles.filter(s => selectedStyleIds.includes(s.id));
+      const enabledUpdates = Object.entries(bulkFieldValues).filter(([_, val]) => val.isEnabled);
+      
+      if (enabledUpdates.length === 0) {
+        alert("Please select at least one field to update.");
+        setIsUploading(false);
+        return;
+      }
+
+      for (const style of selectedStyles) {
+        const updatedStyle = JSON.parse(JSON.stringify(style));
+        
+        for (const [key, val] of enabledUpdates) {
+          const [category, field] = key.split('|');
+          const { target, colorFilter, sizeFilter, strategy } = bulkUpdateMeta;
+          const { text, attachments, consumption_type, consumption_val } = val;
+
+          if (!updatedStyle.tech_pack[category]) updatedStyle.tech_pack[category] = {};
+          if (!updatedStyle.tech_pack[category][field]) updatedStyle.tech_pack[category][field] = { text: '', attachments: [] };
+          
+          const item = updatedStyle.tech_pack[category][field] as TechPackItem;
+
+          const mergeText = (current: string, next: string) => {
+            if (strategy === 'overwrite') return next;
+            return current ? current + '\n' + next : next;
+          };
+
+          const mergeAttachments = (current: Attachment[], next: Attachment[]) => {
+            if (strategy === 'overwrite') return next;
+            return [...(current || []), ...next];
+          };
+
+          if (target === 'global') {
+            item.text = mergeText(item.text, text);
+            item.attachments = mergeAttachments(item.attachments, attachments);
+            if (consumption_type) item.consumption_type = consumption_type;
+            if (consumption_val !== undefined) item.consumption_val = consumption_val;
+            if (strategy === 'overwrite') delete item.variants; 
+          } else if (target === 'color') {
+            if (!item.variants) item.variants = [];
+            const validColors = colorFilter.filter(c => updatedStyle.available_colors?.includes(c));
+            if (validColors.length > 0) {
+              let variant = item.variants.find(v => JSON.stringify(v.colors.sort()) === JSON.stringify(validColors.sort()));
+              if (!variant) {
+                variant = { colors: validColors, text: '', attachments: [] };
+                item.variants.push(variant);
+              }
+              variant.text = mergeText(variant.text, text);
+              variant.attachments = mergeAttachments(variant.attachments, attachments);
+              if (consumption_type) variant.consumption_type = consumption_type;
+              if (consumption_val !== undefined) variant.consumption_val = consumption_val;
+            }
+          } else if (target === 'size') {
+            if (item.variants) {
+               const validSizes = sizeFilter.filter(s => updatedStyle.available_sizes?.includes(s));
+               if (validSizes.length > 0) {
+                 item.variants.forEach(v => {
+                   if (!v.sizeVariants) v.sizeVariants = [];
+                   let sv = v.sizeVariants.find(sVar => JSON.stringify(sVar.sizes.sort()) === JSON.stringify(validSizes.sort()));
+                   if (!sv) {
+                     sv = { sizes: validSizes, text: '', attachments: [] };
+                     v.sizeVariants.push(sv);
+                   }
+                   sv.text = mergeText(sv.text, text);
+                   sv.attachments = mergeAttachments(sv.attachments, attachments);
+                   if (consumption_type) sv.consumption_type = consumption_type;
+                   if (consumption_val !== undefined) sv.consumption_val = consumption_val;
+                 });
+               }
+            }
+          }
+        }
+        await upsertStyle(updatedStyle);
+      }
+      
+      alert("Bulk update completed successfully.");
+      setIsBulkUpdateModalOpen(false);
+      setIsBulkMode(false);
+      setSelectedStyleIds([]);
+      loadData();
+    } catch (err) {
+      alert("Error during bulk update: " + err);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const toggleSelectStyle = (id: string) => {
+    setSelectedStyleIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  const handlePrint = (style: Style) => {
+    const win = window.open('', 'StylePrint', 'width=1000,height=800');
+    if (!win || !template) return;
+
+    const techPackHtml = template.config.filter(c => c.name !== "General Info").map(cat => {
+        const fields = cat.fields.map(f => {
+            const item = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
+            let contentHtml = '';
+            if (item.variants) {
+                contentHtml = item.variants.map(v => {
+                    let sizeHtml = '';
+                    if (v.sizeVariants) {
+                        sizeHtml = `<div style="margin-top:15px; display:grid; grid-template-columns:1fr; gap:12px;">${v.sizeVariants.map(sv => `
+                            <div style="background:#fff; border:1px solid #e2e8f0; border-left:10px solid #2563eb; padding:20px; border-radius:12px;">
+                                <div style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px;">
+                                    ${sv.sizes.map(sz => `<span style="background:#2563eb; color:#fff; display:inline-block; padding:4px 10px; border-radius:6px; font-weight:900; font-size:18px;">SIZE: ${sz}</span>`).join('')}
+                                </div>
+                                <div style="font-size:20px; font-weight:900; color:#1e293b; line-height:1.3;">${sv.text || '---'}</div>
+                            </div>
+                        `).join('')}</div>`;
+                    }
+                    return `<div style="border:2px solid #e2e8f0; padding:20px; border-radius:15px; margin-top:15px; background:#f8fafc; break-inside:avoid;"><div style="margin-bottom:10px;">${v.colors.map(c => `<span style="background:#1e293b; color:#fff; font-size:10px; font-weight:900; padding:4px 10px; border-radius:5px; text-transform:uppercase; margin-right:5px;">${c}</span>`).join('')}</div><div style="font-size:22px; color:#1e293b; font-weight:900; line-height:1.3;">${v.text || '---'}</div>${sizeHtml}</div>`;
+                }).join('');
+            } else {
+                contentHtml = `<div style="font-size:24px; font-weight:900; color:#1e293b; background:#f8fafc; padding:25px; border-radius:15px; border:2px solid #e2e8f0; line-height:1.3;">${item.text || '---'}</div>`;
+            }
+
+            return `
+                <div style="margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:10px; break-inside:avoid;">
+                    <div style="font-size:11px; font-weight:bold; color:#666; text-transform:uppercase; margin-bottom:4px;">${f}</div>
+                    ${contentHtml}
+                </div>
+            `;
+        }).join('');
+        
+        return `
+            <div style="margin-top:40px; page-break-before:always;">
+                <h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name}</h3>
+                <div style="padding:10px;">${fields}</div>
+            </div>
+        `;
     }).join('');
 
-    win.document.write(`<html><head><title>Tech Pack - ${style.style_number}</title><style>body { font-family: 'Inter', -apple-system, sans-serif; padding: 70px; color: #1e293b; line-height: 1.4; } .header { border-bottom: 10px solid #1e293b; padding-bottom: 40px; margin-bottom: 50px; display: flex; justify-content: space-between; align-items: flex-end; } .brand { font-size: 56px; font-weight: 900; letter-spacing: -2px; } .meta { display: grid; grid-template-columns: repeat(5, 1fr); gap: 25px; margin-bottom: 50px; } .box { border: 4px solid #1e293b; padding: 20px; border-radius: 16px; } .label { font-size: 13px; font-weight: 900; color: #64748b; display: block; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 2px; }</style></head><body><div class="header"><div class="brand">TINTURA SST<br/><span style="font-size:24px; color:#64748b; font-weight:800; letter-spacing:3px; text-transform:uppercase;">Technical Manufacturing Blueprint</span></div><div style="text-align:right; font-weight:900; font-size:32px; color:#4f46e5;"># ${style.style_number}</div></div><div class="meta"><div class="box"><span class="label">Style Code</span><strong style="font-size:22px;">${style.style_number}</strong></div><div class="box"><span class="label">Garment</span><strong style="font-size:22px;">${style.garment_type || '---'}</strong></div><div class="box"><span class="label">Demographic</span><strong style="font-size:22px;">${style.demographic || '---'}</strong></div><div class="box"><span class="label">Line</span><strong style="font-size:22px;">${style.category}</strong></div><div class="box"><span class="label">Pcs/Box</span><strong style="font-size:22px;">${style.pcs_per_box}</strong></div></div><div style="background:#f8fafc; border:3px solid #e2e8f0; padding:40px; border-radius:32px; margin-bottom:50px;"><span class="label">Master Technical Summary</span><div style="font-size:28px; font-weight:800; line-height:1.4;">${style.style_text || 'No master technical summary provided.'}</div></div>${categoriesHtml}<script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script></body></html>`);
+    win.document.write(`
+      <html>
+        <head>
+          <title>Tech Pack - ${style.style_number}</title>
+          <style>
+            body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; font-size: 14px; color: #333; }
+            .header { text-align: center; border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; }
+            .brand { font-size: 32px; font-weight: 900; text-transform: uppercase; margin: 0; }
+            .title { font-size: 18px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #666; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+            .box { padding: 15px; border: 2px solid #333; border-radius: 6px; }
+            .label { font-size: 11px; text-transform: uppercase; color: #666; font-weight: bold; }
+            .value { font-size: 16px; font-weight: bold; }
+            .section-title { font-size: 18px; font-weight: 900; border-bottom: 3px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="brand">TINTURA SST</div>
+            <div class="title">Technical Package (Style Blueprint)</div>
+          </div>
+          <div class="grid">
+            <div class="box"><span class="label">Style Number</span><div class="value">${style.style_number}</div></div>
+            <div class="box"><span class="label">Category</span><div class="value">${style.category}</div></div>
+            <div class="box"><span class="label">Garment Type</span><div class="value">${style.garment_type}</div></div>
+            <div class="box"><span class="label">Demographic</span><div class="value">${style.demographic}</div></div>
+            <div class="box"><span class="label">Packing Type</span><div class="value">${style.packing_type} (${style.pcs_per_box} pcs)</div></div>
+            <div class="box"><span class="label">Date Generated</span><div class="value">${new Date().toLocaleDateString()}</div></div>
+          </div>
+          <div class="section-title">Summary & Notes</div>
+          <div style="padding: 20px; border: 2px solid #333; min-height: 60px; background:#fcfcfc; border-radius:6px; font-size:16px;">
+            ${style.style_text || "No technical notes provided."}
+          </div>
+          ${techPackHtml}
+          <script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script>
+        </body>
+      </html>
+    `);
     win.document.close();
   };
 
@@ -574,13 +806,102 @@ export const StyleDatabase: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col xl:flex-row justify-between xl:items-center gap-4">
         <div><h2 className="text-3xl font-black text-slate-800 flex items-center gap-3"><div className="p-2 bg-indigo-600 text-white rounded-xl shadow-lg"><BookOpen size={28}/></div>Style Technical Database</h2><p className="text-slate-500 text-sm mt-1">Master Tech-Packs and Design Blueprint Management</p></div>
-        <div className="flex items-center gap-3"><div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm flex"><button onClick={() => setViewMode('catalog')} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'catalog' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={18}/> Catalog</button><button onClick={() => setViewMode('compare')} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'compare' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><ArrowLeftRight size={18}/> Compare</button></div><button onClick={() => setIsConfigOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all"><Settings size={20}/></button><button onClick={() => setIsEditing({ id: '', style_number: '', category: 'Casuals', packing_type: 'pouch', pcs_per_box: 0, style_text: '', garment_type: 'T-shirt', demographic: 'Men', available_colors: [''], available_sizes: ['S', 'M', 'L', 'XL', 'XXL', '3XL'], size_type: 'letter', tech_pack: {} })} className="bg-indigo-600 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"><Plus size={20}/> New Style</button></div>
+        <div className="flex items-center gap-3">
+          <div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm flex">
+            <button onClick={() => setViewMode('catalog')} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'catalog' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={18}/> Catalog</button>
+            <button onClick={() => setViewMode('compare')} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'compare' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><ArrowLeftRight size={18}/> Compare</button>
+          </div>
+          
+          <div className="h-8 w-px bg-slate-200 mx-2"></div>
+
+          <button 
+            onClick={() => setIsBulkMode(!isBulkMode)} 
+            className={`p-3 rounded-xl border transition-all flex items-center gap-2 font-bold text-sm ${isBulkMode ? 'bg-orange-600 text-white border-orange-600 shadow-lg' : 'bg-white border-slate-200 text-slate-500 hover:border-orange-500 hover:text-orange-600'}`}
+          >
+            <CheckSquare size={20}/> {isBulkMode ? 'Exit Bulk Mode' : 'Bulk Edit'}
+          </button>
+
+          <button onClick={() => setIsConfigOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all"><Settings size={20}/></button>
+          <button onClick={handleNewStyle} className="bg-indigo-600 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"><Plus size={20}/> New Style</button>
+        </div>
       </div>
+
       <div className="relative"><input type="text" placeholder="Search by Style Number, Category, or Garment Type..." className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all font-bold shadow-sm bg-white text-black" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/><Search className="absolute left-4 top-4 text-slate-400" size={24}/></div>
 
       {viewMode === 'catalog' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-fade-in">
-          {filteredStyles.map(style => (<div key={style.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-indigo-300 transition-all group overflow-hidden flex flex-col"><div className="p-6 flex-1 cursor-pointer" onClick={() => setViewingStyle(style)}><div className="flex justify-between items-start mb-4"><div className="flex gap-2"><div className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">{style.garment_type}</div><div className="bg-indigo-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-500 uppercase tracking-widest">{style.demographic}</div></div><div className="flex gap-2" onClick={e => e.stopPropagation()}><button onClick={() => handlePrint(style)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><Printer size={16}/></button><button onClick={() => handleDelete(style.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16}/></button></div></div><div className="flex items-center justify-between group/title"><h3 className="text-2xl font-black text-slate-800 tracking-tight mb-2 group-hover/title:text-indigo-600 transition-colors">{style.style_number}</h3><ChevronRight size={20} className="text-slate-300 group-hover:text-indigo-600 transition-all transform group-hover:translate-x-1" /></div><p className="text-slate-500 text-xs font-medium line-clamp-2 leading-relaxed mb-4">{style.style_text || 'No description provided.'}</p></div><div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2"><button onClick={() => setIsEditing(style)} className="flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-700 hover:border-indigo-500 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"><Edit3 size={14}/> Edit Tech Pack</button><button onClick={() => { if (compareList.find(s => s.id === style.id)) setCompareList(prev => prev.filter(s => s.id !== style.id)); else { setCompareList(prev => [...prev, style]); setViewMode('compare'); } }} className={`p-2.5 rounded-xl border transition-all ${compareList.find(s => s.id === style.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-500 hover:text-indigo-600'}`}><ArrowLeftRight size={18}/></button></div></div>))}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-fade-in relative pb-24">
+          {filteredStyles.map(style => {
+            const isSelected = selectedStyleIds.includes(style.id);
+            return (
+              <div key={style.id} className={`bg-white rounded-2xl border shadow-sm hover:shadow-xl transition-all group overflow-hidden flex flex-col ${isBulkMode && isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-slate-200'}`}>
+                <div className="p-6 flex-1 cursor-pointer relative" onClick={() => isBulkMode ? toggleSelectStyle(style.id) : setViewingStyle(style)}>
+                  {isBulkMode && (
+                    <div className="absolute top-4 right-4 z-10">
+                       {isSelected ? <CheckSquare className="text-indigo-600"/> : <Square className="text-slate-300"/>}
+                    </div>
+                  )}
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex gap-2">
+                      <div className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">{style.garment_type}</div>
+                      <div className="bg-indigo-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-500 uppercase tracking-widest">{style.demographic}</div>
+                    </div>
+                    {!isBulkMode && (
+                      <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => handlePrint(style)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><Printer size={16}/></button>
+                        <button onClick={() => handleDelete(style.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16}/></button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between group/title">
+                    <h3 className="text-2xl font-black text-slate-800 tracking-tight mb-2 group-hover/title:text-indigo-600 transition-colors">{style.style_number}</h3>
+                    <ChevronRight size={20} className="text-slate-300 group-hover:text-indigo-600 transition-all transform group-hover:translate-x-1" />
+                  </div>
+                  <p className="text-slate-500 text-xs font-medium line-clamp-2 leading-relaxed mb-4">{style.style_text || 'No description provided.'}</p>
+                </div>
+                {!isBulkMode && (
+                  <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
+                    <button onClick={() => setIsEditing(style)} className="flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-700 hover:border-indigo-500 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"><Edit3 size={14}/> Edit</button>
+                    <button onClick={() => handleCopyStyle(style)} className="p-2.5 bg-white text-slate-400 border border-slate-200 rounded-xl hover:text-indigo-600 hover:border-indigo-600 transition-all" title="Create Copy"><Copy size={16}/></button>
+                    <button onClick={() => { if (compareList.find(s => s.id === style.id)) setCompareList(prev => prev.filter(s => s.id !== style.id)); else { setCompareList(prev => [...prev, style]); setViewMode('compare'); } }} className={`p-2.5 rounded-xl border transition-all ${compareList.find(s => s.id === style.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-500 hover:text-indigo-600'}`}><ArrowLeftRight size={18}/></button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Floating Bulk Action Bar */}
+      {isBulkMode && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-slide-up">
+           <div className="bg-slate-900 text-white rounded-full px-8 py-4 shadow-2xl flex items-center gap-6 border border-white/10">
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Bulk Actions</span>
+                <span className="text-xl font-black">{selectedStyleIds.length} Selected</span>
+              </div>
+              <div className="h-10 w-px bg-white/20"></div>
+              
+              <div className="flex items-center gap-3">
+                {selectedStyleIds.length > 0 && (
+                  <button 
+                    onClick={() => setIsBulkUpdateModalOpen(true)}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-full font-black text-sm transition-all active:scale-95 shadow-lg flex items-center gap-2"
+                  >
+                    <Edit3 size={18}/> Edit technical fields
+                  </button>
+                )}
+                
+                <button 
+                  onClick={() => bulkFileRef.current?.click()}
+                  className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-full font-black text-sm transition-all active:scale-95 shadow-lg flex items-center gap-2"
+                >
+                  <FileUp size={18}/> Create Bulk (CSV)
+                </button>
+                <input type="file" ref={bulkFileRef} accept=".csv" className="hidden" onChange={handleCSVImport} />
+              </div>
+
+              <button onClick={() => { setSelectedStyleIds([]); setIsBulkMode(false); }} className="text-slate-400 hover:text-white transition-colors ml-2"><X/></button>
+           </div>
         </div>
       )}
 
@@ -588,15 +909,270 @@ export const StyleDatabase: React.FC = () => {
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-x-auto min-h-[600px] animate-fade-in">{compareList.length === 0 ? (<div className="p-20 text-center text-slate-400"><ArrowLeftRight size={48} className="mx-auto mb-4 opacity-20"/><p className="text-xl font-bold">Desk Empty</p><button onClick={() => setViewMode('catalog')} className="mt-6 px-6 py-2 bg-indigo-600 text-white rounded-xl font-bold">Back to Catalog</button></div>) : (<div className="p-8 inline-flex gap-8">{compareList.map(style => (<div key={style.id} className="w-96 shrink-0 bg-slate-50/50 rounded-3xl border border-slate-200 flex flex-col shadow-inner overflow-hidden"><div className="p-6 bg-white border-b border-slate-200 sticky top-0 z-10"><div className="flex justify-between items-start"><h3 className="text-2xl font-black text-slate-800">{style.style_number}</h3><button onClick={() => setCompareList(prev => prev.filter(s => s.id !== style.id))} className="p-1 text-slate-300 hover:text-red-500 transition-colors"><X size={20}/></button></div><div className="mt-4 flex flex-wrap gap-2"><span className="text-[10px] font-black bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full uppercase">{style.category}</span><span className="text-[10px] font-black bg-slate-100 text-slate-700 px-3 py-1 rounded-full uppercase">{style.garment_type}</span></div></div><div className="p-6 space-y-8 overflow-y-auto">{template?.config.filter(c => c.name !== "General Info").map(cat => (<div key={cat.name}><h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest border-b border-indigo-100 pb-2 mb-4">{cat.name}</h4><div className="space-y-6">{cat.fields.map(field => { const item = style.tech_pack[cat.name]?.[field] || { text: '---', attachments: [] }; return (<div key={field}><div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{field}</div>{!item.variants ? (<div className="text-sm font-medium text-slate-700 whitespace-pre-wrap">{item.text}</div>) : (<div className="space-y-4">{item.variants.map((v, vIdx) => (<div key={vIdx} className="bg-white border rounded-xl p-3 shadow-sm"><div className="flex flex-wrap gap-1 mb-2">{v.colors.map(c => <span key={c} className="bg-indigo-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase">{c}</span>)}</div><div className="text-xs text-slate-700">{v.text}</div></div>))}</div>)}</div>); })}</div></div>))}</div></div>))}</div>)}</div>
       )}
 
+      {/* Editor Modal */}
       {isEditing && (
         <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl h-[95vh] overflow-hidden flex flex-col animate-scale-up border border-slate-200">
-            <div className="p-8 border-b bg-slate-50 flex justify-between items-center"><div><h3 className="text-3xl font-black text-slate-800 tracking-tight">{isEditing.id ? `Editing Style ${isEditing.style_number}` : 'New Style Blueprint'}</h3><p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Define technical details and variant specific instructions</p></div><button onClick={() => setIsEditing(null)} className="text-slate-300 hover:text-slate-600 transition-colors p-2 hover:bg-slate-100 rounded-full"><X size={32}/></button></div>
+            <div className="p-8 border-b bg-slate-50 flex justify-between items-center">
+              <div>
+                <h3 className="text-3xl font-black text-slate-800 tracking-tight">{isEditing.id ? `Editing Style ${isEditing.style_number}` : 'New Style Blueprint'}</h3>
+                <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Define technical details and variant specific instructions</p>
+              </div>
+              <div className="flex items-center gap-4">
+                {!isEditing.id && (
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      const source = prompt("Enter Style Number to copy from:");
+                      if (source) {
+                        const match = styles.find(s => s.style_number.toLowerCase() === source.toLowerCase());
+                        if (match) handleCopyStyle(match);
+                        else alert("Style not found.");
+                      }
+                    }}
+                    className="flex items-center gap-2 px-5 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm font-black border border-indigo-100 hover:bg-indigo-100"
+                  >
+                    <Copy size={16}/> Copy Existing
+                  </button>
+                )}
+                <button onClick={() => setIsEditing(null)} className="text-slate-300 hover:text-slate-600 transition-colors p-2 hover:bg-slate-100 rounded-full"><X size={32}/></button>
+              </div>
+            </div>
             <form onSubmit={handleSaveStyle} className="flex-1 overflow-y-auto p-8 bg-slate-50/30">
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-10"><div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Style Number</label><input required className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all" value={isEditing.style_number} onChange={e => setIsEditing({...isEditing, style_number: e.target.value})}/></div><div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Garment Type</label><div className="flex gap-2"><select className="flex-1 border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer" value={isEditing.garment_type} onChange={e => setIsEditing({...isEditing, garment_type: e.target.value})}>{garmentTypeOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select><button type="button" onClick={() => { const v = prompt("New Garment Type:"); if(v) setGarmentTypeOptions([...garmentTypeOptions, v]); }} className="p-4 bg-white border-2 border-slate-100 rounded-xl text-indigo-600"><Plus size={20}/></button></div></div><div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Demographic</label><div className="flex gap-2"><select className="flex-1 border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer" value={isEditing.demographic} onChange={e => setIsEditing({...isEditing, demographic: e.target.value})}>{demographicOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select><button type="button" onClick={() => { const v = prompt("New Demographic:"); if(v) setDemographicOptions([...demographicOptions, v]); }} className="p-4 bg-white border-2 border-slate-100 rounded-xl text-indigo-600"><Plus size={20}/></button></div></div><div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Category</label><select className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white font-bold focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer" value={isEditing.category} onChange={e => setIsEditing({...isEditing, category: e.target.value})}><option value="Casuals">Casuals</option><option value="Lite">Lite</option><option value="Sportz">Sportz</option></select></div><div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Short Description</label><input className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={isEditing.style_text} onChange={e => setIsEditing({...isEditing, style_text: e.target.value})}/></div></div>
               {template?.config.filter(cat => cat.name !== "General Info").map(cat => (<CategoryEditor key={cat.name} category={cat} isEditing={isEditing} setIsEditing={setIsEditing} handleFileUpload={handleFileUpload} />))}
             </form>
             <div className="p-8 border-t bg-white flex justify-between items-center shadow-2xl"><button type="button" onClick={() => setIsEditing(null)} className="px-10 py-4 font-black text-slate-400 hover:text-slate-600 transition-all uppercase text-xs">Cancel</button><button onClick={handleSaveStyle} disabled={isUploading} className="px-12 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-2xl shadow-indigo-200 flex items-center gap-3 active:scale-95 disabled:opacity-50 uppercase text-xs">{isUploading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20}/>} Commit Style Blueprint</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Update Modal */}
+      {isBulkUpdateModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-scale-up border border-slate-200 flex flex-col max-h-[95vh]">
+            <div className="p-8 border-b bg-orange-50 flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="text-2xl font-black text-orange-900 uppercase tracking-tight">Bulk Blueprint Synchronizer</h3>
+                <p className="text-orange-700 text-xs font-bold uppercase tracking-widest mt-1">Applying changes to {selectedStyleIds.length} styles</p>
+              </div>
+              <button onClick={() => setIsBulkUpdateModalOpen(false)} className="text-orange-300 hover:text-orange-600 transition-colors p-2"><X size={32}/></button>
+            </div>
+            
+            <div className="p-8 flex-1 overflow-y-auto space-y-8 bg-slate-50/50">
+               {/* Targeting & Strategy Logic */}
+               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Sync Mode Granularity</label>
+                      <div className="flex bg-slate-100 p-1 rounded-xl">
+                        <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, target: 'global'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${bulkUpdateMeta.target === 'global' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-200'}`}>Apply as Global</button>
+                        <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, target: 'color'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${bulkUpdateMeta.target === 'color' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-200'}`}>Apply Color-wise</button>
+                        <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, target: 'size'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${bulkUpdateMeta.target === 'size' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-200'}`}>Apply Size-wise</button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Merge Strategy</label>
+                      <div className="flex bg-orange-100/50 p-1 rounded-xl border border-orange-100">
+                        <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, strategy: 'overwrite'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${bulkUpdateMeta.strategy === 'overwrite' ? 'bg-orange-600 text-white shadow-md' : 'text-orange-500 hover:bg-orange-100'}`}>
+                          <RefreshCcw size={14}/> Overwrite
+                        </button>
+                        <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, strategy: 'append'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${bulkUpdateMeta.strategy === 'append' ? 'bg-indigo-600 text-white shadow-md' : 'text-indigo-500 hover:bg-indigo-50'}`}>
+                          <FilePlus size={14}/> Append to existing
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-6">
+                    {bulkUpdateMeta.target === 'color' && (
+                      <div className="animate-fade-in">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Target Colors</label>
+                        <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50 rounded-2xl border">
+                          {Array.from(new Set(styles.flatMap(s => s.available_colors || []))).filter(Boolean).sort().map(c => (
+                            <button key={c} onClick={() => setBulkUpdateMeta(prev => ({ ...prev, colorFilter: prev.colorFilter.includes(c) ? prev.colorFilter.filter(x => x !== c) : [...prev.colorFilter, c] }))} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${bulkUpdateMeta.colorFilter.includes(c) ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>{c}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {bulkUpdateMeta.target === 'size' && (
+                      <div className="animate-fade-in">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Target Sizes</label>
+                        <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50 rounded-2xl border">
+                          {Array.from(new Set(styles.flatMap(s => s.available_sizes || []))).filter(Boolean).sort().map(s => (
+                            <button key={s} onClick={() => setBulkUpdateMeta(prev => ({ ...prev, sizeFilter: prev.sizeFilter.includes(s) ? prev.sizeFilter.filter(x => x !== s) : [...prev.sizeFilter, s] }))} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${bulkUpdateMeta.sizeFilter.includes(s) ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>{s}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 text-indigo-500 bg-indigo-50 p-3 rounded-xl border border-indigo-100">
+                    <Info size={16}/>
+                    <p className="text-[10px] font-bold uppercase tracking-tight">Only styles containing the selected color/size will be affected.</p>
+                  </div>
+               </div>
+
+               {/* All Fields organized by Category */}
+               {template?.config.map(cat => (
+                 <div key={cat.name} className="space-y-4">
+                    <div className="flex items-center gap-3 px-4">
+                      <div className="h-px flex-1 bg-slate-200"></div>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">{cat.name}</span>
+                      <div className="h-px flex-1 bg-slate-200"></div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 gap-6">
+                      {cat.fields.map(f => {
+                        const fieldKey = `${cat.name}|${f}`;
+                        const fieldData = bulkFieldValues[fieldKey];
+                        if (!fieldData) return null;
+
+                        return (
+                          <div key={f} className={`bg-white rounded-3xl border transition-all duration-300 ${fieldData.isEnabled ? 'border-indigo-500 ring-4 ring-indigo-50 shadow-xl' : 'border-slate-200 opacity-60 grayscale'}`}>
+                             <div className="p-6 flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                   <button 
+                                      onClick={() => setBulkFieldValues(prev => ({ ...prev, [fieldKey]: { ...prev[fieldKey], isEnabled: !prev[fieldKey].isEnabled } }))}
+                                      className={`p-2 rounded-xl transition-all ${fieldData.isEnabled ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}
+                                   >
+                                      {fieldData.isEnabled ? <CheckSquare size={24}/> : <Square size={24}/>}
+                                   </button>
+                                   <div>
+                                      <h5 className="font-black text-slate-800 uppercase tracking-tight">{f}</h5>
+                                      <p className="text-[10px] text-slate-400 font-bold uppercase">Toggle to include in sync</p>
+                                   </div>
+                                </div>
+                                {fieldData.isEnabled && (
+                                   <ConsumptionInput 
+                                      type={fieldData.consumption_type}
+                                      value={fieldData.consumption_val}
+                                      onChange={(t, v) => setBulkFieldValues(prev => ({ ...prev, [fieldKey]: { ...prev[fieldKey], consumption_type: t, consumption_val: v } }))}
+                                      onClear={() => {
+                                        const { consumption_type, consumption_val, ...rest } = fieldData;
+                                        setBulkFieldValues(prev => ({ ...prev, [fieldKey]: rest as any }));
+                                      }}
+                                   />
+                                )}
+                             </div>
+
+                             {fieldData.isEnabled && (
+                               <div className="p-6 pt-0 space-y-6 animate-fade-in">
+                                  <textarea 
+                                    className="w-full border-2 border-slate-100 rounded-2xl p-4 h-32 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium bg-slate-50/30"
+                                    placeholder={bulkUpdateMeta.strategy === 'append' ? `Content to append to existing ${f.toLowerCase()}...` : `Overwrite technical instructions for ${f.toLowerCase()}...`}
+                                    value={fieldData.text}
+                                    onChange={e => setBulkFieldValues(prev => ({ ...prev, [fieldKey]: { ...prev[fieldKey], text: e.target.value } }))}
+                                  />
+                                  <div className="flex items-start gap-4">
+                                     <div className="flex-1">
+                                        <label className="inline-flex items-center gap-2 px-4 py-2 bg-white border-2 border-dashed border-slate-200 rounded-xl text-[10px] font-black text-slate-400 hover:text-indigo-600 hover:border-indigo-400 cursor-pointer transition-all">
+                                          <Plus size={14}/> Add Field Attachments
+                                          <input 
+                                            type="file" multiple className="hidden" 
+                                            onChange={async (e) => {
+                                              if (!e.target.files) return;
+                                              setIsUploading(true);
+                                              const newAtts = [];
+                                              for (const file of Array.from(e.target.files)) {
+                                                const url = await uploadOrderAttachment(file);
+                                                if (url) newAtts.push({ name: file.name, url, type: file.type.startsWith('image/') ? 'image' : 'document' });
+                                              }
+                                              setBulkFieldValues(prev => ({ ...prev, [fieldKey]: { ...prev[fieldKey], attachments: [...prev[fieldKey].attachments, ...newAtts] } }));
+                                              setIsUploading(false);
+                                            }}
+                                          />
+                                        </label>
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                           {fieldData.attachments.map((a, idx) => (
+                                             <div key={idx} className="flex items-center gap-1.5 bg-indigo-50 px-2 py-1 rounded-lg text-[9px] font-black text-indigo-700 border border-indigo-100">
+                                               {a.name} <button onClick={() => setBulkFieldValues(prev => ({ ...prev, [fieldKey]: { ...prev[fieldKey], attachments: prev[fieldKey].attachments.filter((_, i) => i !== idx) } }))}><X size={10}/></button>
+                                             </div>
+                                           ))}
+                                        </div>
+                                     </div>
+                                  </div>
+                               </div>
+                             )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                 </div>
+               ))}
+            </div>
+
+            <div className="p-8 border-t bg-white flex justify-between items-center shadow-2xl shrink-0">
+              <button type="button" onClick={() => setIsBulkUpdateModalOpen(false)} className="px-10 py-4 font-black text-slate-400 hover:text-slate-600 uppercase text-xs">Cancel</button>
+              <button 
+                onClick={handleBulkUpdate} 
+                disabled={isUploading || (bulkUpdateMeta.target === 'color' && bulkUpdateMeta.colorFilter.length === 0) || (bulkUpdateMeta.target === 'size' && bulkUpdateMeta.sizeFilter.length === 0)}
+                className="px-12 py-4 bg-orange-600 text-white rounded-2xl font-black shadow-2xl shadow-orange-200 flex items-center gap-3 active:scale-95 disabled:opacity-50 uppercase text-xs"
+              >
+                {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20}/>} Sync Selected Blueprint Fields
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Import Preview Modal */}
+      {isBulkImportModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-scale-up border border-slate-200 flex flex-col max-h-[90vh]">
+            <div className="p-8 border-b bg-indigo-50 flex justify-between items-center">
+              <div>
+                <h3 className="text-2xl font-black text-indigo-900 uppercase tracking-tight">Bulk Import Preview</h3>
+                <p className="text-indigo-700 text-xs font-bold uppercase tracking-widest mt-1">Found {bulkImportData.length} entries in CSV</p>
+              </div>
+              <button onClick={() => setIsBulkImportModalOpen(false)} className="text-indigo-300 hover:text-indigo-600 transition-colors p-2"><X size={32}/></button>
+            </div>
+            
+            <div className="p-8 flex-1 overflow-auto bg-slate-50/50">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 text-slate-500 font-black uppercase text-[10px] border-b">
+                    <tr>
+                      <th className="p-4">Style No.</th>
+                      <th className="p-4">Garment</th>
+                      <th className="p-4">Demographic</th>
+                      <th className="p-4">Category</th>
+                      <th className="p-4">Short description</th>
+                      <th className="p-4">Colours</th>
+                      <th className="p-4">Sizes</th>
+                      <th className="p-4">Fabric</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {bulkImportData.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 font-black text-slate-800">{row['Style No.']}</td>
+                        <td className="p-4">{row['GarmentType']}</td>
+                        <td className="p-4">{row['Demographic']}</td>
+                        <td className="p-4">{row['Category']}</td>
+                        <td className="p-4 italic text-slate-500 line-clamp-1">{row['Short description']}</td>
+                        <td className="p-4 max-w-[150px] truncate">{row['Available colours']}</td>
+                        <td className="p-4 max-w-[150px] truncate">{row['size variants']}</td>
+                        <td className="p-4 font-bold text-indigo-600">{row['fabric']}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="p-8 border-t bg-white flex justify-between items-center shadow-2xl">
+              <button type="button" onClick={() => setIsBulkImportModalOpen(false)} className="px-10 py-4 font-black text-slate-400 hover:text-slate-600 uppercase text-xs">Cancel</button>
+              <button 
+                onClick={handleExecuteBulkImport} 
+                disabled={isUploading}
+                className="px-12 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-2xl shadow-indigo-200 flex items-center gap-3 active:scale-95 disabled:opacity-50 uppercase text-xs"
+              >
+                {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Plus size={20}/>} Create All Technical Blueprints
+              </button>
+            </div>
           </div>
         </div>
       )}
