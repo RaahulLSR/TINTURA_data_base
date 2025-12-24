@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { fetchStyles, upsertStyle, fetchStyleTemplate, updateStyleTemplate, deleteStyle, uploadOrderAttachment } from '../services/db';
 import { Style, StyleTemplate, StyleCategory, TechPackItem, Attachment, TechPackVariant, TechPackSizeVariant, ConsumptionType } from '../types';
 import { 
-  Plus, Search, Grid, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, Settings, ArrowLeftRight, Loader2, Download, Layers, BookOpen, Palette, Ruler, ChevronDown, ChevronUp, ChevronRight, Info, ArrowLeft, ExternalLink, Split, Scan, Calculator, CheckSquare, Square, Filter, ToggleLeft, ToggleRight, FilePlus, RefreshCcw, FileUp, Table
+  Plus, Search, Grid, Copy, Trash2, Save, Printer, Edit3, X, Image as ImageIcon, FileText, Settings, ArrowLeftRight, Loader2, Download, Layers, BookOpen, Palette, Ruler, ChevronDown, ChevronUp, ChevronRight, Info, ArrowLeft, ExternalLink, Split, Scan, Calculator, CheckSquare, Square, Filter, ToggleLeft, ToggleRight, FilePlus, RefreshCcw, FileUp, Table, Check
 } from 'lucide-react';
 
 // --- Sub-components ---
@@ -34,7 +34,7 @@ const ConsumptionInput: React.FC<ConsumptionInputProps> = ({ type, value, onChan
         <button 
           type="button" 
           onClick={() => onChange('items_per_pc', value || 0)}
-          className={`px-2 py-1 rounded-md text-[8px] font-black uppercase transition-all ${type === 'items_per_pc' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+          className={`px-2 py-1 rounded-md text-[8px] font-black uppercase transition-all ${type === 'items_per_pc' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-50'}`}
         >
           Items / PC
         </button>
@@ -210,7 +210,7 @@ const CategoryEditor: React.FC<CategoryEditorProps> = ({
                   <div className="space-y-8 animate-fade-in">
                     {item.variants?.map((variant, vIdx) => (
                       <div key={vIdx} className="bg-white border-2 border-indigo-100 rounded-3xl p-6 shadow-sm relative group">
-                        <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants?.splice(vIdx, 1); setIsEditing(updated); }} className="absolute -top-3 -right-3 bg-red-500 text-white p-2 rounded-full shadow-lg opacity-0 group-hover/size:opacity-100 transition-opacity"><X size={16}/></button>
+                        <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants?.splice(vIdx, 1); setIsEditing(updated); }} className="absolute -top-3 -right-3 bg-red-500 text-white p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"><X size={16}/></button>
                         
                         <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="flex-1">
@@ -322,12 +322,16 @@ const CategoryEditor: React.FC<CategoryEditorProps> = ({
   );
 };
 
-const StyleFullView: React.FC<{ style: Style, template: StyleTemplate | null, onBack: () => void, onPrint: () => void, onEdit: () => void }> = ({ style, template, onBack, onPrint, onEdit }) => {
+const StyleFullView: React.FC<{ style: Style, template: StyleTemplate | null, onBack: () => void, onPrint: () => void, onEdit: () => void, onDelete: () => void }> = ({ style, template, onBack, onPrint, onEdit, onDelete }) => {
   return (
     <div className="bg-white min-h-screen animate-fade-in -m-8 p-8">
       <div className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 -mx-8 px-8 py-4 flex items-center justify-between mb-8">
         <div className="flex items-center gap-6"><button onClick={onBack} className="p-2.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all flex items-center gap-2 font-bold"><ArrowLeft size={20}/> Catalog</button><div className="h-6 w-px bg-slate-200"></div><div><h1 className="text-2xl font-black text-slate-900 tracking-tight">{style.style_number}</h1><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{style.category} • {style.garment_type} ({style.demographic})</p></div></div>
-        <div className="flex items-center gap-3"><button onClick={onEdit} className="flex items-center gap-2 px-6 py-2.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl font-bold transition-all"><Edit3 size={18}/> Edit Blueprint</button><button onClick={onPrint} className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl font-black shadow-lg shadow-indigo-100 transition-all"><Printer size={18}/> Generate Tech-Pack PDF</button></div>
+        <div className="flex items-center gap-3">
+          <button onClick={onDelete} className="p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all" title="Delete Blueprint"><Trash2 size={22}/></button>
+          <button onClick={onEdit} className="flex items-center gap-2 px-6 py-2.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl font-bold transition-all"><Edit3 size={18}/> Edit Blueprint</button>
+          <button onClick={onPrint} className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl font-black shadow-lg shadow-indigo-100 transition-all"><Printer size={18}/> Generate Tech-Pack PDF</button>
+        </div>
       </div>
 
       <div className="max-w-7xl mx-auto space-y-12">
@@ -452,6 +456,13 @@ export const StyleDatabase: React.FC = () => {
   const [isBulkImportModalOpen, setIsBulkImportModalOpen] = useState(false);
   const [bulkImportData, setBulkImportData] = useState<any[]>([]);
   const bulkFileRef = useRef<HTMLInputElement>(null);
+
+  // Bulk Selection Filters
+  const [bulkSelFilter, setBulkSelFilter] = useState({
+    garment: '',
+    demographic: '',
+    category: ''
+  });
   
   // Revised Bulk Update Form Structure
   const [bulkUpdateMeta, setBulkUpdateMeta] = useState<{
@@ -531,7 +542,7 @@ export const StyleDatabase: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => { 
-    if (confirm("Permanently delete this style?")) { await deleteStyle(id); loadData(); } 
+    if (confirm("Permanently delete this style?")) { await deleteStyle(id); loadData(); setViewingStyle(null); } 
   };
 
   const handleFileUpload = async (category: string, field: string, files: FileList | null, vIdx?: number, svIdx?: number) => {
@@ -550,7 +561,8 @@ export const StyleDatabase: React.FC = () => {
       target = updated.tech_pack[category][field].attachments;
     }
 
-    for (const file of Array.from(files)) {
+    const filesArr = Array.from(files) as File[];
+    for (const file of filesArr) {
       const url = await uploadOrderAttachment(file);
       if (url) target.push({ name: file.name, url, type: file.type.startsWith('image/') ? 'image' : 'document' });
     }
@@ -740,6 +752,21 @@ export const StyleDatabase: React.FC = () => {
     setSelectedStyleIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
+  const applyBulkFilterSelection = (isSelecting: boolean) => {
+    const matchingIds = styles.filter(s => {
+      const matchesGarment = !bulkSelFilter.garment || s.garment_type === bulkSelFilter.garment;
+      const matchesDemographic = !bulkSelFilter.demographic || s.demographic === bulkSelFilter.demographic;
+      const matchesCategory = !bulkSelFilter.category || s.category === bulkSelFilter.category;
+      return matchesGarment && matchesDemographic && matchesCategory;
+    }).map(s => s.id);
+
+    if (isSelecting) {
+      setSelectedStyleIds(prev => Array.from(new Set([...prev, ...matchingIds])));
+    } else {
+      setSelectedStyleIds(prev => prev.filter(id => !matchingIds.includes(id)));
+    }
+  };
+
   const handlePrint = (style: Style) => {
     const win = window.open('', 'StylePrint', 'width=1000,height=800');
     if (!win || !template) return;
@@ -824,7 +851,7 @@ export const StyleDatabase: React.FC = () => {
     win.document.close();
   };
 
-  if (viewingStyle) return <StyleFullView style={viewingStyle} template={template} onBack={() => setViewingStyle(null)} onEdit={() => { setIsEditing(viewingStyle); setViewingStyle(null); }} onPrint={() => handlePrint(viewingStyle)} />;
+  if (viewingStyle) return <StyleFullView style={viewingStyle} template={template} onBack={() => setViewingStyle(null)} onEdit={() => { setIsEditing(viewingStyle); setViewingStyle(null); }} onPrint={() => handlePrint(viewingStyle)} onDelete={() => handleDelete(viewingStyle.id)} />;
 
   return (
     <div className="space-y-6">
@@ -839,10 +866,10 @@ export const StyleDatabase: React.FC = () => {
           <div className="h-8 w-px bg-slate-200 mx-2"></div>
 
           <button 
-            onClick={() => setIsBulkMode(!isBulkMode)} 
+            onClick={() => { setIsBulkMode(!isBulkMode); setSelectedStyleIds([]); }} 
             className={`p-3 rounded-xl border transition-all flex items-center gap-2 font-bold text-sm ${isBulkMode ? 'bg-orange-600 text-white border-orange-600 shadow-lg' : 'bg-white border-slate-200 text-slate-500 hover:border-orange-500 hover:text-orange-600'}`}
           >
-            <CheckSquare size={20}/> {isBulkMode ? 'Exit Bulk Mode' : 'Bulk Edit'}
+            <CheckSquare size={20}/> {isBulkMode ? 'Exit Bulk Mode' : 'Bulk Selection'}
           </button>
 
           <button onClick={() => setIsConfigOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all"><Settings size={20}/></button>
@@ -851,6 +878,46 @@ export const StyleDatabase: React.FC = () => {
       </div>
 
       <div className="relative"><input type="text" placeholder="Search by Style Number, Category, or Garment Type..." className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all font-bold shadow-sm bg-white text-black" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/><Search className="absolute left-4 top-4 text-slate-400" size={24}/></div>
+
+      {isBulkMode && (
+        <div className="bg-slate-900/5 p-6 rounded-3xl border-2 border-dashed border-indigo-200 animate-fade-in">
+           <div className="flex flex-col md:flex-row items-end gap-4">
+              <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
+                 <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Garment Type Filter</label>
+                    <select className="w-full border-2 border-slate-100 rounded-xl p-3 bg-white font-bold text-sm outline-none focus:ring-2 focus:ring-indigo-500" value={bulkSelFilter.garment} onChange={e => setBulkSelFilter({...bulkSelFilter, garment: e.target.value})}>
+                       <option value="">All Garment Types</option>
+                       {garmentTypeOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Demographic Filter</label>
+                    <select className="w-full border-2 border-slate-100 rounded-xl p-3 bg-white font-bold text-sm outline-none focus:ring-2 focus:ring-indigo-500" value={bulkSelFilter.demographic} onChange={e => setBulkSelFilter({...bulkSelFilter, demographic: e.target.value})}>
+                       <option value="">All Demographics</option>
+                       {demographicOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Category Filter</label>
+                    <select className="w-full border-2 border-slate-100 rounded-xl p-3 bg-white font-bold text-sm outline-none focus:ring-2 focus:ring-indigo-500" value={bulkSelFilter.category} onChange={e => setBulkSelFilter({...bulkSelFilter, category: e.target.value})}>
+                       <option value="">All Categories</option>
+                       <option value="Casuals">Casuals</option>
+                       <option value="Lite">Lite</option>
+                       <option value="Sportz">Sportz</option>
+                    </select>
+                 </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                 <button onClick={() => applyBulkFilterSelection(true)} className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all flex items-center gap-2">
+                    <CheckSquare size={16}/> Select All Matching
+                 </button>
+                 <button onClick={() => applyBulkFilterSelection(false)} className="px-5 py-3 bg-white text-slate-500 border border-slate-200 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2">
+                    <Square size={16}/> Deselect All Matching
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
 
       {viewMode === 'catalog' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-fade-in relative pb-24">
