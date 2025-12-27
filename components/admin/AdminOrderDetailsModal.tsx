@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Printer, Save, Loader2, Clock, Paperclip, Box, Image as ImageIcon, FileText, Download, ArrowLeftRight, Upload, BookOpen, Calculator, ExternalLink } from 'lucide-react';
+import { X, Pencil, Trash2, Printer, Save, Loader2, Clock, Paperclip, Box, Image as ImageIcon, FileText, Download, ArrowLeftRight, Upload, BookOpen, Calculator, ExternalLink, RefreshCcw } from 'lucide-react';
 import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber, Style, StyleTemplate, ConsumptionType } from '../../types';
-import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleByNumber, fetchStyleTemplate } from '../../services/db';
+import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleByNumber, fetchStyleTemplate, fetchStyles } from '../../services/db';
 
 interface RequirementDetail {
   label: string;
@@ -33,12 +33,19 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
   const [useNumericSizes, setUseNumericSizes] = useState(order.size_format === 'numeric');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [linkedStyle, setLinkedStyle] = useState<Style | null>(null);
+  const [availableStyles, setAvailableStyles] = useState<Style[]>([]);
+  const [selectedStyleId, setSelectedStyleId] = useState<string>('');
 
   useEffect(() => {
     fetchOrderLogs(order.id).then(setModalLogs);
+    fetchStyles().then(setAvailableStyles);
+    
     const styleRefPart = order.style_number.split(' - ')[0].trim();
     if (styleRefPart) {
-        fetchStyleByNumber(styleRefPart).then(setLinkedStyle);
+        fetchStyleByNumber(styleRefPart).then(s => {
+            setLinkedStyle(s);
+            if (s) setSelectedStyleId(s.id);
+        });
     }
   }, [order.id, order.style_number]);
 
@@ -46,26 +53,58 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
   const getTotalQuantity = (bd: SizeBreakdown[]) => bd.reduce((acc, row) => acc + getRowTotal(row), 0);
   const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
 
+  const handleStyleSelect = (styleId: string) => {
+    setSelectedStyleId(styleId);
+    const style = availableStyles.find(s => s.id === styleId);
+    if (!style) return;
+    
+    // Autofill Logic: Reference = <style number> - <short description>
+    const newStyleNum = `${style.style_number} - ${style.style_text}`;
+    setEditFormData(prev => ({
+      ...prev,
+      style_number: newStyleNum
+    }));
+    
+    setUseNumericSizes(style.size_type === 'number');
+    setLinkedStyle(style);
+
+    // Prompt to update color variants if they exist in the new style
+    if (style.available_colors && style.available_colors.length > 0) {
+      if (confirm("Would you like to reset the color breakdown based on the new style's colors? (Existing quantities will be lost)")) {
+        const newBreakdown = style.available_colors
+          .filter(c => c.trim() !== '')
+          .map(color => ({
+            color, s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0
+          }));
+        setEditFormData(prev => ({ ...prev, size_breakdown: newBreakdown }));
+      }
+    }
+  };
+
   const calculateRequirementValue = (qty: number, type: ConsumptionType, val: number) => {
     if (!val) return 0;
     return type === 'items_per_pc' ? qty * val : qty / val;
   };
 
   const getDetailedRequirements = (): DetailedRequirement[] => {
-    if (!linkedStyle || !order.size_breakdown) return [];
+    // During editing, we use the temporary linkedStyle if it changed
+    const activeStyle = linkedStyle;
+    const activeBreakdown = (editFormData.size_breakdown || order.size_breakdown) as SizeBreakdown[];
+
+    if (!activeStyle || !activeBreakdown) return [];
     
     const detailedReqs: DetailedRequirement[] = [];
     const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
     const sizeLabels = getHeaderLabels();
 
-    for (const catName in linkedStyle.tech_pack) {
-      for (const fieldName in linkedStyle.tech_pack[catName]) {
-        const item = linkedStyle.tech_pack[catName][fieldName];
+    for (const catName in activeStyle.tech_pack) {
+      for (const fieldName in activeStyle.tech_pack[catName]) {
+        const item = activeStyle.tech_pack[catName][fieldName];
         const req: DetailedRequirement = { name: fieldName, total: 0, breakdown: [] };
 
         if (item.variants) {
           for (const variant of item.variants) {
-            const matchingRows = order.size_breakdown.filter(r => variant.colors.includes(r.color));
+            const matchingRows = activeBreakdown.filter(r => variant.colors.includes(r.color));
             if (matchingRows.length === 0) continue;
 
             if (variant.sizeVariants) {
@@ -102,10 +141,11 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
             }
           }
         } else if (item.consumption_type) {
-          const calc = calculateRequirementValue(order.quantity, item.consumption_type, item.consumption_val || 0);
+          const currentTotal = isEditing ? getTotalQuantity(activeBreakdown) : order.quantity;
+          const calc = calculateRequirementValue(currentTotal, item.consumption_type, item.consumption_val || 0);
           req.breakdown.push({
             label: "Global (All Colors/Sizes)",
-            count: order.quantity,
+            count: currentTotal,
             calc: Math.ceil(calc * 100) / 100,
             text: item.text,
             attachments: item.attachments
@@ -132,12 +172,21 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
       }
       const finalAttachments = [...(editFormData.attachments || []), ...newAttachments];
       const finalQty = getTotalQuantity(editFormData.size_breakdown as SizeBreakdown[]);
-      const result = await updateOrderDetails(order.id, { ...editFormData, quantity: finalQty, attachments: finalAttachments, size_format: useNumericSizes ? 'numeric' : 'standard' });
+      const result = await updateOrderDetails(order.id, { 
+        ...editFormData, 
+        quantity: finalQty, 
+        attachments: finalAttachments, 
+        size_format: useNumericSizes ? 'numeric' : 'standard' 
+      });
       if (result.success) {
         await triggerOrderEmail(order.id, true);
         onRefresh();
         onClose();
+      } else {
+        alert("Error saving: " + result.error);
       }
+    } catch (err: any) {
+        alert("Exception: " + err.message);
     } finally {
       setIsUploading(false);
     }
@@ -175,8 +224,8 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
           </div>
           <div class="meta">
             <div><strong>Order:</strong> ${formattedNo}</div>
-            <div><strong>Style:</strong> ${order.style_number}</div>
-            <div><strong>Batch:</strong> ${order.quantity} PCS</div>
+            <div><strong>Style:</strong> ${isEditing ? editFormData.style_number : order.style_number}</div>
+            <div><strong>Batch:</strong> ${isEditing ? getTotalQuantity(editFormData.size_breakdown as SizeBreakdown[]) : order.quantity} PCS</div>
             <div><strong>Date:</strong> ${new Date().toLocaleDateString()}</div>
           </div>
           ${detailedReqs.map(req => `
@@ -210,7 +259,8 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     let techPackHtml = '';
     let preProductionHtml = '';
     
-    const styleRefPart = order.style_number.split(' - ')[0].trim();
+    const activeStyleNumber = isEditing ? editFormData.style_number : order.style_number;
+    const styleRefPart = activeStyleNumber!.split(' - ')[0].trim();
     if (styleRefPart) {
         const [style, template] = await Promise.all([ fetchStyleByNumber(styleRefPart), fetchStyleTemplate() ]);
         if (style && template) {
@@ -273,11 +323,13 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     }
 
     const formattedNo = formatOrderNumber(order);
-    const headers = order.size_format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+    const headers = useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
     const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
-    const breakdownRows = (order.size_breakdown || []).map(row => `<tr><td style="text-align:left; font-weight:bold; border: 1px solid #333;">${row.color}</td>${keys.map(k => `<td style="border: 1px solid #333;">${(row as any)[k]}</td>`).join('')}<td style="font-weight:bold; background:#f1f5f9; border: 1px solid #333;">${getRowTotal(row)}</td></tr>`).join('');
+    const activeBreakdown = (isEditing ? editFormData.size_breakdown : order.size_breakdown) || [];
+    const breakdownRows = activeBreakdown.map(row => `<tr><td style="text-align:left; font-weight:bold; border: 1px solid #333;">${row.color}</td>${keys.map(k => `<td style="border: 1px solid #333;">${(row as any)[k]}</td>`).join('')}<td style="font-weight:bold; background:#f1f5f9; border: 1px solid #333;">${getRowTotal(row)}</td></tr>`).join('');
 
-    const orderImgs = (order.attachments || []).filter(a => a.type === 'image');
+    const activeAttachments = (isEditing ? editFormData.attachments : order.attachments) || [];
+    const orderImgs = activeAttachments.filter(a => a.type === 'image');
     const attachmentGridStyle = `display:grid; grid-template-columns:${orderImgs.length === 1 ? '1fr' : '1fr 1fr'}; gap:10px; margin-top:10px;`;
 
     const win = window.open('', 'OrderPrint', 'width=1100,height=850');
@@ -301,16 +353,16 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
           <div class="header"><div class="brand">TINTURA SST</div><div style="font-size:11px; font-weight:bold; color:#64748b; text-transform:uppercase; letter-spacing:1px;">Job Execution Document</div></div>
           <div class="grid">
             <div class="box"><span class="label">Job ID</span><div class="value">${formattedNo}</div></div>
-            <div class="box"><span class="label">Style</span><div class="value">${order.style_number}</div></div>
-            <div class="box"><span class="label">Batch Qty</span><div class="value">${order.quantity} PCS</div></div>
-            <div class="box"><span class="label">Target Date</span><div class="value">${order.target_delivery_date}</div></div>
+            <div class="box"><span class="label">Style</span><div class="value">${activeStyleNumber}</div></div>
+            <div class="box"><span class="label">Batch Qty</span><div class="value">${isEditing ? getTotalQuantity(activeBreakdown) : order.quantity} PCS</div></div>
+            <div class="box"><span class="label">Target Date</span><div class="value">${isEditing ? editFormData.target_delivery_date : order.target_delivery_date}</div></div>
           </div>
           
           <div class="section-title">Color & Size Matrix</div>
           <table><thead><tr><th style="text-align:left; border:1px solid #333;">Variant</th>${headers.map(h => `<th style="border:1px solid #333;">${h}</th>`).join('')}<th style="border:1px solid #333;">Total</th></tr></thead><tbody>${breakdownRows}</tbody></table>
           
           <div class="section-title">Manufacturing Notes</div>
-          <div class="notes-box">${order.description || 'No notes provided.'}</div>
+          <div class="notes-box">${isEditing ? editFormData.description : order.description || 'No notes provided.'}</div>
 
           ${orderImgs.length > 0 ? `
             <div class="section-title">Visual References</div>
@@ -334,11 +386,100 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[95vh] animate-scale-up border border-slate-200">
-        <div className="p-6 border-b flex justify-between items-start bg-white"><div><h3 className="text-3xl font-black text-slate-800 tracking-tight">{formatOrderNumber(order)}</h3></div><div className="flex items-center gap-3">{!isEditing && <button onClick={() => setIsEditing(true)} className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-5 py-2.5 rounded-xl text-sm font-black hover:bg-indigo-600 hover:text-white transition-all"><Pencil size={18} /> Modify Order</button>}<button onClick={onClose} className="text-slate-300 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full"><X size={32}/></button></div></div>
+        <div className="p-6 border-b flex justify-between items-start bg-white">
+          <div>
+            <h3 className="text-3xl font-black text-slate-800 tracking-tight">{formatOrderNumber(order)}</h3>
+            {isEditing && <p className="text-xs font-bold text-indigo-600 uppercase tracking-widest mt-1">Editing Mode Active</p>}
+          </div>
+          <div className="flex items-center gap-3">
+            {!isEditing && <button onClick={() => setIsEditing(true)} className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-5 py-2.5 rounded-xl text-sm font-black hover:bg-indigo-600 hover:text-white transition-all"><Pencil size={18} /> Modify Order</button>}
+            <button onClick={onClose} className="text-slate-300 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full"><X size={32}/></button>
+          </div>
+        </div>
         <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-slate-50/20">
-          <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex items-center gap-3"><BookOpen size={20} className="text-indigo-600"/><div><p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Style DB Synchronized</p><p className="text-sm font-bold text-indigo-900 mt-1">Granular material forecasts calculated based on color and size specific ratios.</p></div></div>
           
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6"><div className="p-5 bg-white rounded-2xl border border-slate-100 shadow-sm"><span className="block text-[10px] text-slate-400 uppercase font-black mb-2">Volume</span><div className="text-2xl font-black text-slate-800">{isEditing ? getTotalQuantity(editFormData.size_breakdown as SizeBreakdown[]) : order.quantity} PCS</div></div><div className="p-5 bg-white rounded-2xl border border-slate-100 shadow-sm"><span className="block text-[10px] text-slate-400 uppercase font-black mb-2">Delivery</span>{isEditing ? <input type="date" className="w-full border rounded p-2" value={editFormData.target_delivery_date} onChange={e => setEditFormData({...editFormData, target_delivery_date: e.target.value})}/> : <div className="text-lg font-black">{order.target_delivery_date}</div>}</div><div className="p-5 bg-white rounded-2xl border border-slate-100 shadow-sm"><span className="block text-[10px] text-slate-400 uppercase font-black mb-2"><Box size={10}/> Planned Boxes</span>{isEditing ? <input type="number" className="w-full border rounded p-2" value={editFormData.box_count} onChange={e => setEditFormData({...editFormData, box_count: parseInt(e.target.value) || 0})}/> : <div className="text-lg font-black">{order.box_count}</div>}</div><div className="p-5 bg-indigo-50 rounded-2xl border border-indigo-100 shadow-sm"><span className="block text-[10px] text-indigo-400 uppercase font-black mb-2">Unit</span>{isEditing ? <select className="w-full border rounded p-2 bg-white font-bold" value={editFormData.unit_id} onChange={e => setEditFormData({...editFormData, unit_id: parseInt(e.target.value)})}>{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select> : <div className="text-lg font-black text-indigo-900">{units.find(u => u.id === order.unit_id)?.name}</div>}</div></div>
+          {isEditing && (
+            <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 animate-fade-in space-y-6">
+              <div className="flex flex-col md:flex-row items-center gap-6">
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="p-3 bg-white rounded-xl text-indigo-600 shadow-sm border border-indigo-50">
+                    <BookOpen size={24}/>
+                  </div>
+                  <div>
+                    <h4 className="font-black text-indigo-900 text-sm uppercase tracking-tight leading-none">Change Technical Style</h4>
+                    <p className="text-indigo-400 text-[10px] font-bold uppercase tracking-widest mt-1">Link this order to a different blueprint</p>
+                  </div>
+                </div>
+                <div className="flex-1 w-full">
+                  <select 
+                    className="w-full bg-white border-2 border-indigo-200 rounded-xl px-5 py-4 text-sm font-black text-indigo-700 outline-none focus:ring-4 focus:ring-indigo-100 cursor-pointer shadow-sm"
+                    value={selectedStyleId}
+                    onChange={e => handleStyleSelect(e.target.value)}
+                  >
+                    <option value="">-- No linked technical style --</option>
+                    {availableStyles.map(s => (
+                      <option key={s.id} value={s.id}>{s.style_number} - {s.style_text}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!isEditing && (
+            <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex items-center gap-3">
+              <BookOpen size={20} className="text-indigo-600"/>
+              <div>
+                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Style DB Synchronized</p>
+                <p className="text-sm font-bold text-indigo-900 mt-1">Granular material forecasts calculated based on color and size specific ratios.</p>
+              </div>
+            </div>
+          )}
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <div className="p-5 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                <span className="block text-[10px] text-slate-400 uppercase font-black mb-2">Reference Text</span>
+                {isEditing ? (
+                  <input 
+                    className="w-full border rounded p-2 text-sm font-bold text-slate-800" 
+                    value={editFormData.style_number} 
+                    onChange={e => setEditFormData({...editFormData, style_number: e.target.value})}
+                  />
+                ) : (
+                  <div className="text-sm font-black text-slate-800">{order.style_number}</div>
+                )}
+            </div>
+            <div className="p-5 bg-white rounded-2xl border border-slate-100 shadow-sm">
+              <span className="block text-[10px] text-slate-400 uppercase font-black mb-2">Volume</span>
+              <div className="text-2xl font-black text-slate-800">{isEditing ? getTotalQuantity(editFormData.size_breakdown as SizeBreakdown[]) : order.quantity} PCS</div>
+            </div>
+            <div className="p-5 bg-white rounded-2xl border border-slate-100 shadow-sm">
+              <span className="block text-[10px] text-slate-400 uppercase font-black mb-2">Delivery</span>
+              {isEditing ? (
+                <input type="date" className="w-full border rounded p-2 font-bold" value={editFormData.target_delivery_date} onChange={e => setEditFormData({...editFormData, target_delivery_date: e.target.value})}/>
+              ) : (
+                <div className="text-lg font-black">{order.target_delivery_date}</div>
+              )}
+            </div>
+            <div className="p-5 bg-white rounded-2xl border border-slate-100 shadow-sm">
+              <span className="block text-[10px] text-slate-400 uppercase font-black mb-2"><Box size={10}/> Planned Boxes</span>
+              {isEditing ? (
+                <input type="number" className="w-full border rounded p-2 font-bold" value={editFormData.box_count} onChange={e => setEditFormData({...editFormData, box_count: parseInt(e.target.value) || 0})}/>
+              ) : (
+                <div className="text-lg font-black">{order.box_count}</div>
+              )}
+            </div>
+            <div className="p-5 bg-indigo-50 rounded-2xl border border-indigo-100 shadow-sm">
+              <span className="block text-[10px] text-indigo-400 uppercase font-black mb-2">Facility Unit</span>
+              {isEditing ? (
+                <select className="w-full border rounded p-2 bg-white font-bold" value={editFormData.unit_id} onChange={e => setEditFormData({...editFormData, unit_id: parseInt(e.target.value)})}>
+                  {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              ) : (
+                <div className="text-lg font-black text-indigo-900">{units.find(u => u.id === order.unit_id)?.name}</div>
+              )}
+            </div>
+          </div>
 
           {/* GRANULAR REQUIREMENTS FORECAST SECTION */}
           {detailedReqs.length > 0 && (
@@ -394,17 +535,155 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
             </div>
           )}
           
-          <div><div className="flex justify-between items-center mb-4"><h4 className="font-black text-slate-700 uppercase tracking-tight text-lg">Product breakdown matrix</h4>{isEditing && <button type="button" onClick={() => setUseNumericSizes(!useNumericSizes)} className="text-[10px] bg-slate-100 px-4 py-2 rounded-xl border border-slate-200 font-black uppercase"><ArrowLeftRight size={14} className="inline mr-2"/> Switch Size Format</button>}</div><div className="border border-slate-200 rounded-3xl overflow-hidden shadow-sm bg-white"><table className="w-full text-center text-sm border-collapse"><thead className="bg-slate-50 text-slate-500 font-black uppercase text-[10px] tracking-widest border-b"><tr><th className="p-4 text-left border-r">Color Variant</th>{getHeaderLabels().map(h => <th key={h} className="p-4 border-r">{h}</th>)}<th className="p-4 bg-slate-100">Sum</th>{isEditing && <th className="p-4 w-12"></th>}</tr></thead><tbody className="divide-y divide-slate-100">{(isEditing ? editFormData.size_breakdown : order.size_breakdown)?.map((row, idx) => (<tr key={idx} className="hover:bg-slate-50/50 transition-colors"><td className="p-4 text-left font-black text-slate-700 border-r">{isEditing ? <input className="w-full border rounded p-1 font-bold" value={row.color} onChange={e => { const bd = [...(editFormData.size_breakdown || [])]; bd[idx].color = e.target.value; setEditFormData({...editFormData, size_breakdown: bd}); }}/> : row.color}</td>{['s','m','l','xl','xxl','xxxl'].map(key => (<td key={key} className="p-4 border-r">{isEditing ? <input type="number" className="w-16 border rounded p-1 text-center font-black" value={(row as any)[key]} onChange={e => { const bd = [...(editFormData.size_breakdown || [])]; (bd[idx] as any)[key] = parseInt(e.target.value) || 0; setEditFormData({...editFormData, size_breakdown: bd}); }}/> : (order.size_breakdown?.[idx]?.[key as keyof SizeBreakdown] || 0)}</td>))}<td className="p-4 font-black text-slate-900 bg-slate-50/50 tabular-nums">{getRowTotal(row)}</td>{isEditing && <td className="p-4"><button onClick={() => setEditFormData({...editFormData, size_breakdown: (editFormData.size_breakdown || []).filter((_, i) => i !== idx)})} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={20}/></button></td>}</tr>))}</tbody></table>{isEditing && <button onClick={() => setEditFormData({...editFormData, size_breakdown: [...(editFormData.size_breakdown || []), { color: '', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }]})} className="w-full py-4 bg-slate-50 text-indigo-600 text-xs font-black uppercase border-t hover:bg-indigo-50 transition-colors">+ Add Color Variant</button>}</div></div>
+          <div>
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="font-black text-slate-700 uppercase tracking-tight text-lg">Product breakdown matrix</h4>
+              {isEditing && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setUseNumericSizes(!useNumericSizes)} className="text-[10px] bg-slate-100 px-4 py-2 rounded-xl border border-slate-200 font-black uppercase"><ArrowLeftRight size={14} className="inline mr-2"/> Switch Size Format</button>
+                  <button type="button" onClick={() => setEditFormData({...editFormData, size_breakdown: [...(editFormData.size_breakdown || []), { color: '', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }]})} className="text-[10px] bg-indigo-600 text-white px-4 py-2 rounded-xl font-black uppercase hover:bg-indigo-700 transition-all">+ Add Color</button>
+                </div>
+              )}
+            </div>
+            <div className="border border-slate-200 rounded-3xl overflow-hidden shadow-sm bg-white">
+              <table className="w-full text-center text-sm border-collapse">
+                <thead className="bg-slate-50 text-slate-500 font-black uppercase text-[10px] tracking-widest border-b">
+                  <tr>
+                    <th className="p-4 text-left border-r">Color Variant</th>
+                    {getHeaderLabels().map(h => <th key={h} className="p-4 border-r">{h}</th>)}
+                    <th className="p-4 bg-slate-100">Sum</th>
+                    {isEditing && <th className="p-4 w-12"></th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(isEditing ? editFormData.size_breakdown : order.size_breakdown)?.map((row, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-4 text-left font-black text-slate-700 border-r">
+                        {isEditing ? (
+                          <input className="w-full border rounded p-1 font-bold text-sm" value={row.color} onChange={e => { const bd = [...(editFormData.size_breakdown || [])]; bd[idx].color = e.target.value; setEditFormData({...editFormData, size_breakdown: bd}); }}/>
+                        ) : row.color}
+                      </td>
+                      {['s','m','l','xl','xxl','xxxl'].map(key => (
+                        <td key={key} className="p-4 border-r">
+                          {isEditing ? (
+                            <input type="number" className="w-16 border rounded p-1 text-center font-black" value={(row as any)[key]} onChange={e => { const bd = [...(editFormData.size_breakdown || [])]; (bd[idx] as any)[key] = parseInt(e.target.value) || 0; setEditFormData({...editFormData, size_breakdown: bd}); }}/>
+                          ) : (order.size_breakdown?.[idx]?.[key as keyof SizeBreakdown] || 0)}
+                        </td>
+                      ))}
+                      <td className="p-4 font-black text-slate-900 bg-slate-50/50 tabular-nums">{getRowTotal(row)}</td>
+                      {isEditing && (
+                        <td className="p-4">
+                          <button onClick={() => setEditFormData({...editFormData, size_breakdown: (editFormData.size_breakdown || []).filter((_, i) => i !== idx)})} className="text-red-400 hover:text-red-600 transition-colors">
+                            <Trash2 size={20}/>
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8"><div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm"><span className="block text-[11px] text-slate-400 uppercase font-black mb-3">Master production notes</span>{isEditing ? <textarea className="w-full border border-slate-200 rounded-2xl p-4 h-48 font-medium" value={editFormData.description} onChange={e => setEditFormData({...editFormData, description: e.target.value})}/> : <p className="text-xl text-slate-800 font-black whitespace-pre-wrap leading-relaxed">{order.description || 'N/A'}</p>}</div><div className="p-6 bg-indigo-50/30 rounded-3xl border border-indigo-100 shadow-inner"><h4 className="font-black text-indigo-400 uppercase text-[10px] flex items-center gap-2 mb-4"><Paperclip size={14}/> Technical documents</h4><div className="space-y-3">{(isEditing ? editFormData.attachments : order.attachments)?.map((att, i) => (<div key={i} className="flex items-center justify-between p-4 bg-white rounded-xl border border-indigo-50 group hover:shadow-md transition-all"><a href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-4 flex-1">{att.type === 'image' ? <ImageIcon size={20} className="text-indigo-400" /> : <FileText size={20} className="text-indigo-400" />}<span className="text-sm font-black text-slate-700 truncate">{att.name}</span></a>{isEditing && <button onClick={() => setEditFormData({...editFormData, attachments: (editFormData.attachments || []).filter((_, idx) => idx !== i)})} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={20}/></button>}</div>))}{isEditing && <div className="mt-4 border-2 border-dashed border-indigo-100 rounded-2xl p-6 text-center relative hover:bg-white transition-all cursor-pointer"><input type="file" multiple className="absolute inset-0 opacity-0 cursor-pointer" onChange={e => e.target.files && setSelectedFiles(prev => [...prev, ...Array.from(e.target.files!)])}/><Upload size={32} className="mx-auto text-indigo-400"/><p className="text-[10px] font-black text-indigo-600 uppercase mt-2 tracking-widest">Add technical files</p></div>}</div></div></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <span className="block text-[11px] text-slate-400 uppercase font-black mb-3">Master production notes</span>
+              {isEditing ? (
+                <textarea className="w-full border border-slate-200 rounded-2xl p-4 h-48 font-medium text-sm" value={editFormData.description} onChange={e => setEditFormData({...editFormData, description: e.target.value})}/>
+              ) : (
+                <p className="text-xl text-slate-800 font-black whitespace-pre-wrap leading-relaxed">{order.description || 'N/A'}</p>
+              )}
+            </div>
+            <div className="p-6 bg-indigo-50/30 rounded-3xl border border-indigo-100 shadow-inner">
+              <h4 className="font-black text-indigo-400 uppercase text-[10px] flex items-center gap-2 mb-4">
+                <Paperclip size={14}/> Technical documents
+              </h4>
+              <div className="space-y-3">
+                {(isEditing ? editFormData.attachments : order.attachments)?.map((att, i) => (
+                  <div key={i} className="flex items-center justify-between p-4 bg-white rounded-xl border border-indigo-50 group hover:shadow-md transition-all">
+                    <a href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-4 flex-1">
+                      {att.type === 'image' ? <ImageIcon size={20} className="text-indigo-400" /> : <FileText size={20} className="text-indigo-400" />}
+                      <span className="text-sm font-black text-slate-700 truncate">{att.name}</span>
+                    </a>
+                    {isEditing && (
+                      <button onClick={() => setEditFormData({...editFormData, attachments: (editFormData.attachments || []).filter((_, idx) => idx !== i)})} className="text-slate-300 hover:text-red-500 transition-colors">
+                        <Trash2 size={20}/>
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {isEditing && (
+                  <div className="mt-4 border-2 border-dashed border-indigo-100 rounded-2xl p-6 text-center relative hover:bg-white transition-all cursor-pointer">
+                    <input type="file" multiple className="absolute inset-0 opacity-0 cursor-pointer" onChange={e => e.target.files && setSelectedFiles(prev => [...prev, ...Array.from(e.target.files!)])}/>
+                    <Upload size={32} className="mx-auto text-indigo-400"/>
+                    <p className="text-[10px] font-black text-indigo-600 uppercase mt-2 tracking-widest">Add technical files</p>
+                  </div>
+                )}
+                {selectedFiles.length > 0 && isEditing && (
+                  <div className="mt-2 space-y-1">
+                    {selectedFiles.map((f, idx) => (
+                      <div key={idx} className="text-[10px] font-bold text-indigo-500 bg-white px-2 py-1 rounded border border-indigo-100 flex justify-between items-center">
+                        {f.name}
+                        <button type="button" onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))}><X size={10}/></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
           
-          <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm flex flex-col"><h4 className="font-black text-indigo-900 uppercase text-[10px] flex items-center gap-2 mb-6"><Clock size={16}/> Lifecycle status log</h4><div className="space-y-6 max-h-[400px] overflow-y-auto pr-4">{modalLogs.map(log => (<div key={log.id} className="flex gap-4 border-l-4 border-indigo-100 pl-6 pb-2 transition-all hover:border-indigo-400"><div className="font-black text-[10px] text-slate-400 uppercase leading-none pt-1">{new Date(log.created_at).toLocaleDateString()}<br/><span className="text-indigo-400 opacity-60 font-bold">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span></div><div className="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-200"><p className="text-slate-700 font-bold leading-snug">{log.message}</p></div></div>))}</div></div>
+          <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm flex flex-col">
+            <h4 className="font-black text-indigo-900 uppercase text-[10px] flex items-center gap-2 mb-6">
+              <Clock size={16}/> Lifecycle status log
+            </h4>
+            <div className="space-y-6 max-h-[400px] overflow-y-auto pr-4">
+              {modalLogs.map(log => (
+                <div key={log.id} className="flex gap-4 border-l-4 border-indigo-100 pl-6 pb-2 transition-all hover:border-indigo-400">
+                  <div className="font-black text-[10px] text-slate-400 uppercase leading-none pt-1">
+                    {new Date(log.created_at).toLocaleDateString()}<br/>
+                    <span className="text-indigo-400 opacity-60 font-bold">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                  </div>
+                  <div className="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <p className="text-slate-700 font-bold leading-snug">{log.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="p-6 border-t bg-slate-50 flex justify-between items-center"><button onClick={() => { if(confirm("Permanently delete this order?")) deleteOrder(order.id).then(() => {onRefresh(); onClose();}); }} className="p-3 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all"><Trash2 size={24}/></button><div className="flex items-center gap-4">
-          <button onClick={handlePrintMaterialForecast} className="px-6 py-3 bg-white text-indigo-600 border border-indigo-600 rounded-xl font-black uppercase text-[10px] flex items-center gap-2 shadow-sm hover:bg-indigo-50 transition-all">
-            <Calculator size={16}/> Print Material Forecast
-          </button>
-          <button onClick={handlePrint} className="px-8 py-3 bg-white text-indigo-600 border-2 border-indigo-600 rounded-xl font-black uppercase text-xs flex items-center gap-2 shadow-sm hover:bg-indigo-50 transition-all"><Printer size={16}/> Print Job Sheet</button><button onClick={onClose} className="px-10 py-3 bg-slate-800 text-white rounded-xl font-black uppercase text-xs hover:bg-slate-700 transition-all">Close</button>{isEditing && <button handleSave={handleSave} disabled={isUploading} className="bg-indigo-600 text-white px-10 py-3 rounded-xl font-black uppercase text-xs shadow-lg shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all">{isUploading ? <Loader2 className="animate-spin inline mr-2" size={16}/> : null}{isUploading ? 'Saving...' : 'Save Job'}</button>}</div></div>
+        
+        <div className="p-6 border-t bg-slate-50 flex justify-between items-center">
+          <div className="flex gap-2">
+            {!isEditing && (
+              <button onClick={() => { if(confirm("Permanently delete this order?")) deleteOrder(order.id).then(() => {onRefresh(); onClose();}); }} className="p-3 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all">
+                <Trash2 size={24}/>
+              </button>
+            )}
+            {isEditing && (
+              <button onClick={() => { setIsEditing(false); setEditFormData({...order}); setLinkedStyle(null); setSelectedFiles([]); }} className="px-6 py-3 bg-white text-slate-400 border border-slate-200 rounded-xl font-black uppercase text-xs hover:bg-slate-100 transition-all">
+                Cancel
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-4">
+            <button onClick={handlePrintMaterialForecast} className="px-6 py-3 bg-white text-indigo-600 border border-indigo-600 rounded-xl font-black uppercase text-[10px] flex items-center gap-2 shadow-sm hover:bg-indigo-50 transition-all">
+              <Calculator size={16}/> Print Material Forecast
+            </button>
+            <button onClick={handlePrint} className="px-8 py-3 bg-white text-indigo-600 border-2 border-indigo-600 rounded-xl font-black uppercase text-xs flex items-center gap-2 shadow-sm hover:bg-indigo-50 transition-all"><Printer size={16}/> Print Job Sheet</button>
+            {!isEditing && <button onClick={onClose} className="px-10 py-3 bg-slate-800 text-white rounded-xl font-black uppercase text-xs hover:bg-slate-700 transition-all">Close</button>}
+            {isEditing && (
+              <button 
+                onClick={handleSave} 
+                disabled={isUploading} 
+                className="bg-indigo-600 text-white px-10 py-3 rounded-xl font-black uppercase text-xs shadow-lg shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all flex items-center gap-2"
+              >
+                {isUploading ? <Loader2 className="animate-spin" size={16}/> : <Save size={18}/>}
+                {isUploading ? 'Saving...' : 'Save Changes'}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
