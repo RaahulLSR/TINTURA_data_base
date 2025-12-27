@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchStyles, upsertStyle, fetchStyleTemplate, deleteStyle, uploadOrderAttachment } from '../services/db';
-import { Style, StyleTemplate, Attachment, TechPackItem, ConsumptionType } from '../types';
+import { fetchStyles, upsertStyle, fetchStyleTemplate, deleteStyle, uploadOrderAttachment, fetchOrders } from '../services/db';
+import { Style, StyleTemplate, Attachment, TechPackItem, ConsumptionType, Order } from '../types';
 import { 
   Plus, Search, Grid, Copy, Trash2, Settings, ArrowLeftRight, CheckSquare, Square, FileUp, Table, BookOpen, ChevronRight, Edit3, Printer, X, FileSpreadsheet
 } from 'lucide-react';
@@ -16,6 +16,7 @@ import { BulkAttributeUpdateModal } from '../components/style-db/BulkAttributeUp
 
 export const StyleDatabase: React.FC = () => {
   const [styles, setStyles] = useState<Style[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [template, setTemplate] = useState<StyleTemplate | null>(null);
   const [viewMode, setViewMode] = useState<'catalog' | 'compare'>('catalog');
   const [searchTerm, setSearchTerm] = useState('');
@@ -53,9 +54,10 @@ export const StyleDatabase: React.FC = () => {
   } & TechPackItem>>({});
 
   const loadData = async () => {
-    const [s, t] = await Promise.all([fetchStyles(), fetchStyleTemplate()]);
+    const [s, t, o] = await Promise.all([fetchStyles(), fetchStyleTemplate(), fetchOrders()]);
     setStyles(s);
     setTemplate(t);
+    setOrders(o);
     const existingGarments = Array.from(new Set([...garmentTypeOptions, ...s.map(style => style.garment_type).filter(Boolean) as string[]]));
     const existingDemos = Array.from(new Set([...demographicOptions, ...s.map(style => style.demographic).filter(Boolean) as string[]]));
     setGarmentTypeOptions(existingGarments);
@@ -572,7 +574,7 @@ export const StyleDatabase: React.FC = () => {
                 {!isBulkMode && (
                   <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
                     <button onClick={() => { setIsEditing(style); setEditTarget(null); }} className="flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-700 hover:border-indigo-500 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"><Edit3 size={14}/> Edit</button>
-                    <button onClick={() => handleCopyStyle(style)} className="p-2.5 bg-white text-slate-400 border border-slate-200 rounded-xl hover:text-indigo-600 hover:border-indigo-600 transition-all" title="Create Copy"><Copy size={16}/></button>
+                    <button onClick={(() => handleCopyStyle(style))} className="p-2.5 bg-white text-slate-400 border border-slate-200 rounded-xl hover:text-indigo-600 hover:border-indigo-600 transition-all" title="Create Copy"><Copy size={16}/></button>
                     <button onClick={() => { if (compareList.find(s => s.id === style.id)) setCompareList(prev => prev.filter(s => s.id !== style.id)); else { setCompareList(prev => [...prev, style]); setViewMode('compare'); } }} className={`p-2.5 rounded-xl border transition-all ${compareList.find(s => s.id === style.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border border-slate-200 hover:border-indigo-500 hover:text-indigo-600'}`}><ArrowLeftRight size={18}/></button>
                   </div>
                 )}
@@ -590,7 +592,7 @@ export const StyleDatabase: React.FC = () => {
               <div className="flex items-center gap-3">
                 {selectedStyleIds.length > 0 && <button onClick={() => setIsBulkUpdateModalOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-full font-black text-sm transition-all active:scale-95 shadow-lg flex items-center gap-2"><Edit3 size={18}/> Edit technical fields</button>}
                 <button onClick={() => bulkFileRef.current?.click()} className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-full font-black text-sm transition-all active:scale-95 shadow-lg flex items-center gap-2"><FileUp size={18}/> Create Bulk (CSV)</button>
-                <input type="file" min-h-[600px] ref={bulkFileRef} accept=".csv" className="hidden" onChange={handleCSVImport} />
+                <input type="file" ref={bulkFileRef} accept=".csv" className="hidden" onChange={handleCSVImport} />
               </div>
               <button onClick={() => { setSelectedStyleIds([]); setIsBulkMode(false); }} className="text-slate-400 hover:text-white transition-colors ml-2"><X/></button>
            </div>
@@ -628,6 +630,7 @@ export const StyleDatabase: React.FC = () => {
           onClose={() => setIsBulkUpdateModalOpen(false)} onExecute={handleBulkUpdate}
           unionColors={unionColors}
           unionSizes={unionSizes}
+          orders={orders}
         />
       )}
 

@@ -1,7 +1,7 @@
 
-import React from 'react';
-import { X, RefreshCcw, FilePlus, CheckSquare, Square, Info, Save, Loader2, Plus, Split, Scan, ImageIcon, Trash2 } from 'lucide-react';
-import { Style, StyleTemplate, Attachment, TechPackItem } from '../../types';
+import React, { useMemo } from 'react';
+import { X, RefreshCcw, FilePlus, CheckSquare, Square, Info, Save, Loader2, Plus, Split, Scan, ImageIcon, Trash2, LayoutGrid, Calculator } from 'lucide-react';
+import { Style, StyleTemplate, Attachment, TechPackItem, Order, SizeBreakdown } from '../../types';
 import { ConsumptionInput } from './ConsumptionInput';
 import { uploadOrderAttachment } from '../../services/db';
 
@@ -21,6 +21,7 @@ interface BulkUpdateModalProps {
   onExecute: () => void;
   unionColors: string[];
   unionSizes: string[];
+  orders: Order[];
 }
 
 export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({ 
@@ -36,7 +37,8 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
   onClose, 
   onExecute,
   unionColors,
-  unionSizes
+  unionSizes,
+  orders
 }) => {
 
   const handleFieldChange = (key: string, updates: Partial<TechPackItem>) => {
@@ -83,18 +85,118 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
     }
   };
 
+  // --- Aggregate Order Data ---
+  const productionAggregate = useMemo(() => {
+    const selectedStyles = styles.filter(s => selectedStyleIds.includes(s.id));
+    const selectedStyleNums = selectedStyles.map(s => s.style_number.toLowerCase());
+    
+    // Filter relevant orders (matching any of selected styles)
+    const relevantOrders = orders.filter(o => {
+      const baseStyleNum = o.style_number.split(' - ')[0].trim().toLowerCase();
+      return selectedStyleNums.includes(baseStyleNum);
+    });
+
+    const matrix: Record<string, Record<string, number>> = {};
+    unionColors.forEach(c => {
+      matrix[c] = {};
+      unionSizes.forEach(s => {
+        matrix[c][s] = 0;
+      });
+    });
+
+    relevantOrders.forEach(order => {
+      const isNumeric = order.size_format === 'numeric';
+      const sizeMap = isNumeric 
+        ? { 's': '65', 'm': '70', 'l': '75', 'xl': '80', 'xxl': '85', 'xxxl': '90' }
+        : { 's': 'S', 'm': 'M', 'l': 'L', 'xl': 'XL', 'xxl': 'XXL', 'xxxl': '3XL' };
+
+      order.size_breakdown?.forEach(row => {
+        if (matrix[row.color]) {
+          Object.entries(sizeMap).forEach(([key, label]) => {
+            if (matrix[row.color][label] !== undefined) {
+              matrix[row.color][label] += (row as any)[key] || 0;
+            }
+          });
+        }
+      });
+    });
+
+    return matrix;
+  }, [selectedStyleIds, styles, orders, unionColors, unionSizes]);
+
+  const totalProductionCount = useMemo(() => {
+    let total = 0;
+    Object.values(productionAggregate).forEach(row => {
+      // Fix for Type Error on Operator '+': Explicitly casting val as number
+      Object.values(row).forEach(val => total += (val as number));
+    });
+    return total;
+  }, [productionAggregate]);
+
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-scale-up border border-slate-200 flex flex-col max-h-[95vh]">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-[90vw] overflow-hidden animate-scale-up border border-slate-200 flex flex-col max-h-[95vh]">
         <div className="p-8 border-b bg-orange-50 flex justify-between items-center shrink-0">
-          <div>
-            <h3 className="text-2xl font-black text-orange-900 uppercase tracking-tight">Bulk Blueprint Synchronizer</h3>
-            <p className="text-orange-700 text-xs font-bold uppercase tracking-widest mt-1">Applying changes to {selectedStyleIds.length} styles</p>
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-orange-600 text-white rounded-2xl shadow-lg">
+              <RefreshCcw size={32}/>
+            </div>
+            <div>
+              <h3 className="text-2xl font-black text-orange-900 uppercase tracking-tight">Bulk Blueprint Synchronizer</h3>
+              <p className="text-orange-700 text-xs font-bold uppercase tracking-widest mt-1">Applying technical updates to {selectedStyleIds.length} blueprints</p>
+            </div>
           </div>
           <button onClick={onClose} className="text-orange-300 hover:text-orange-600 transition-colors p-2"><X size={32}/></button>
         </div>
         
         <div className="p-8 flex-1 overflow-y-auto space-y-8 bg-slate-50/50">
+           
+           {/* NEW: PRODUCTION VOLUME AGGREGATE MATRIX */}
+           {totalProductionCount > 0 && (
+             <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-fade-in">
+                <div className="p-5 border-b bg-slate-900 text-white flex justify-between items-center">
+                   <div className="flex items-center gap-3">
+                      <LayoutGrid size={20} className="text-indigo-400"/>
+                      <h4 className="font-black uppercase tracking-widest text-sm">Aggregated Order Volume (Unit 1 → All)</h4>
+                   </div>
+                   <div className="flex items-center gap-4">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Batch Volume</span>
+                      <span className="text-2xl font-black text-indigo-400">{totalProductionCount} PCS</span>
+                   </div>
+                </div>
+                <div className="overflow-x-auto">
+                   <table className="w-full text-center text-xs border-collapse">
+                      <thead className="bg-slate-50 text-slate-500 font-black uppercase text-[9px] tracking-widest border-b">
+                         <tr>
+                            <th className="p-4 text-left border-r sticky left-0 bg-slate-50">Color Variant</th>
+                            {unionSizes.map(sz => <th key={sz} className="p-4 border-r">{sz}</th>)}
+                            <th className="p-4 bg-slate-100 font-black">Sum</th>
+                         </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                         {unionColors.map(color => {
+                           const row = productionAggregate[color];
+                           // Fix for Type Error on Operator '+': Explicitly casting Object.values to number array
+                           const rowTotal = (Object.values(row) as number[]).reduce((a,b) => a+b, 0);
+                           if (rowTotal === 0) return null; // Skip empty rows for cleaner view
+                           return (
+                             <tr key={color} className="hover:bg-indigo-50/30 transition-colors">
+                                <td className="p-4 text-left font-black text-slate-800 border-r sticky left-0 bg-white group-hover:bg-indigo-50/30">{color}</td>
+                                {unionSizes.map(sz => (
+                                  <td key={sz} className={`p-4 border-r tabular-nums font-bold ${row[sz] > 0 ? 'text-indigo-600 bg-indigo-50/20' : 'text-slate-200'}`}>
+                                    {row[sz] || '-'}
+                                  </td>
+                                ))}
+                                <td className="p-4 font-black text-slate-900 bg-slate-50 tabular-nums">{rowTotal}</td>
+                             </tr>
+                           );
+                         })}
+                      </tbody>
+                   </table>
+                </div>
+             </div>
+           )}
+
            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-8">
               <div className="flex-1">
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Merge Strategy</label>
