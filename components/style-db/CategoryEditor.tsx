@@ -174,6 +174,10 @@ export const CategoryEditor: React.FC<CategoryEditorProps> = ({
                           <div className="flex-1">
                             <div className="flex items-center gap-3 mb-3">
                               <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest">Target Color Group</label>
+                              <div className="flex gap-1 ml-2">
+                                <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants![vIdx].colors = [...availableColors]; setIsEditing(updated); }} className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 hover:bg-indigo-100 transition-colors">All</button>
+                                <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants![vIdx].colors = []; setIsEditing(updated); }} className="text-[8px] font-black uppercase text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">None</button>
+                              </div>
                               {!variant.sizeVariants && (
                                 <ConsumptionInput 
                                   type={variant.consumption_type} 
@@ -214,7 +218,13 @@ export const CategoryEditor: React.FC<CategoryEditorProps> = ({
                                  
                                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                    <div>
-                                     <label className="block text-[9px] font-black text-blue-400 uppercase mb-2 tracking-widest">Apply to Sizes</label>
+                                     <div className="flex items-center gap-3 mb-2">
+                                       <label className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">Apply to Sizes</label>
+                                       <div className="flex gap-1">
+                                         <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants![vIdx].sizeVariants![svIdx].sizes = [...availableSizes]; setIsEditing(updated); }} className="text-[7px] font-black uppercase text-blue-600 bg-white px-1.5 py-0.5 rounded border border-blue-100 hover:bg-blue-50 transition-colors">All</button>
+                                         <button type="button" onClick={() => { const updated = { ...isEditing }; updated.tech_pack[category.name][field].variants![vIdx].sizeVariants![svIdx].sizes = []; setIsEditing(updated); }} className="text-[7px] font-black uppercase text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">None</button>
+                                       </div>
+                                     </div>
                                      <div className="flex flex-wrap gap-1.5">
                                        {availableSizes.map(sz => {
                                          const isSzSelected = sv.sizes.includes(sz);

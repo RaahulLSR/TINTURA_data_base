@@ -1,7 +1,7 @@
 
 import React from 'react';
-import { X, RefreshCcw, FilePlus, CheckSquare, Square, Info, Save, Loader2, Plus } from 'lucide-react';
-import { Style, StyleTemplate, Attachment, ConsumptionType } from '../../types';
+import { X, RefreshCcw, FilePlus, CheckSquare, Square, Info, Save, Loader2, Plus, Split, Scan, ImageIcon, Trash2 } from 'lucide-react';
+import { Style, StyleTemplate, Attachment, TechPackItem } from '../../types';
 import { ConsumptionInput } from './ConsumptionInput';
 import { uploadOrderAttachment } from '../../services/db';
 
@@ -10,18 +10,17 @@ interface BulkUpdateModalProps {
   template: StyleTemplate | null;
   selectedStyleIds: string[];
   bulkUpdateMeta: {
-    target: 'global' | 'color' | 'size';
-    colorFilter: string[];
-    sizeFilter: string[];
     strategy: 'overwrite' | 'append';
   };
   setBulkUpdateMeta: (meta: any) => void;
-  bulkFieldValues: Record<string, any>;
+  bulkFieldValues: Record<string, { isEnabled: boolean } & TechPackItem>;
   setBulkFieldValues: (vals: any) => void;
   isUploading: boolean;
   setIsUploading: (val: boolean) => void;
   onClose: () => void;
   onExecute: () => void;
+  unionColors: string[];
+  unionSizes: string[];
 }
 
 export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({ 
@@ -35,8 +34,55 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
   isUploading, 
   setIsUploading, 
   onClose, 
-  onExecute 
+  onExecute,
+  unionColors,
+  unionSizes
 }) => {
+
+  const handleFieldChange = (key: string, updates: Partial<TechPackItem>) => {
+    setBulkFieldValues((prev: any) => ({
+      ...prev,
+      [key]: { ...prev[key], ...updates }
+    }));
+  };
+
+  const handleSplitColor = (key: string) => {
+    const current = bulkFieldValues[key];
+    if (!current.variants) {
+      handleFieldChange(key, {
+        variants: [{ colors: [], text: current.text || '', attachments: current.attachments || [], consumption_type: current.consumption_type, consumption_val: current.consumption_val }]
+      });
+    } else {
+      handleFieldChange(key, {
+        variants: [...current.variants, { colors: [], text: '', attachments: [] }]
+      });
+    }
+  };
+
+  const handleAddSizeGroup = (key: string, vIdx: number) => {
+    const current = { ...bulkFieldValues[key] };
+    const variant = current.variants![vIdx];
+    if (!variant.sizeVariants) {
+      variant.sizeVariants = [{ sizes: [], text: '', attachments: [], consumption_type: variant.consumption_type, consumption_val: variant.consumption_val }];
+    } else {
+      variant.sizeVariants.push({ sizes: [], text: '', attachments: [] });
+    }
+    setBulkFieldValues((prev: any) => ({ ...prev, [key]: current }));
+  };
+
+  const handleUnsplit = (key: string) => {
+    const current = bulkFieldValues[key];
+    if (current.variants) {
+      handleFieldChange(key, {
+        text: current.variants[0].text,
+        attachments: current.variants[0].attachments,
+        consumption_type: current.variants[0].consumption_type,
+        consumption_val: current.variants[0].consumption_val,
+        variants: undefined
+      });
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-scale-up border border-slate-200 flex flex-col max-h-[95vh]">
@@ -49,57 +95,21 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
         </div>
         
         <div className="p-8 flex-1 overflow-y-auto space-y-8 bg-slate-50/50">
-           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Sync Mode Granularity</label>
-                  <div className="flex bg-slate-100 p-1 rounded-xl">
-                    <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, target: 'global'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${bulkUpdateMeta.target === 'global' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-200'}`}>Apply as Global</button>
-                    <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, target: 'color'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${bulkUpdateMeta.target === 'color' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-200'}`}>Apply Color-wise</button>
-                    <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, target: 'size'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${bulkUpdateMeta.target === 'size' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-200'}`}>Apply Size-wise</button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Merge Strategy</label>
-                  <div className="flex bg-orange-100/50 p-1 rounded-xl border border-orange-100">
-                    <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, strategy: 'overwrite'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${bulkUpdateMeta.strategy === 'overwrite' ? 'bg-orange-600 text-white shadow-md' : 'text-orange-500 hover:bg-orange-100'}`}>
-                      <RefreshCcw size={14}/> Overwrite
-                    </button>
-                    <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, strategy: 'append'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${bulkUpdateMeta.strategy === 'append' ? 'bg-indigo-600 text-white shadow-md' : 'text-indigo-500 hover:bg-indigo-50'}`}>
-                      <FilePlus size={14}/> Append to existing
-                    </button>
-                  </div>
+           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-8">
+              <div className="flex-1">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Merge Strategy</label>
+                <div className="flex bg-orange-100/50 p-1 rounded-xl border border-orange-100 max-w-md">
+                  <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, strategy: 'overwrite'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${bulkUpdateMeta.strategy === 'overwrite' ? 'bg-orange-600 text-white shadow-md' : 'text-orange-500 hover:bg-orange-100'}`}>
+                    <RefreshCcw size={14}/> Overwrite
+                  </button>
+                  <button onClick={() => setBulkUpdateMeta({...bulkUpdateMeta, strategy: 'append'})} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${bulkUpdateMeta.strategy === 'append' ? 'bg-indigo-600 text-white shadow-md' : 'text-indigo-500 hover:bg-indigo-50'}`}>
+                    <FilePlus size={14}/> Append to existing
+                  </button>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 gap-6">
-                {bulkUpdateMeta.target === 'color' && (
-                  <div className="animate-fade-in">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Target Colors</label>
-                    <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50 rounded-2xl border">
-                      {Array.from(new Set(styles.flatMap(s => s.available_colors || []))).filter(Boolean).sort().map(c => (
-                        <button key={c} onClick={() => setBulkUpdateMeta((prev: any) => ({ ...prev, colorFilter: prev.colorFilter.includes(c) ? prev.colorFilter.filter((x: any) => x !== c) : [...prev.colorFilter, c] }))} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${bulkUpdateMeta.colorFilter.includes(c) ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>{c}</button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {bulkUpdateMeta.target === 'size' && (
-                  <div className="animate-fade-in">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Target Sizes</label>
-                    <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50 rounded-2xl border">
-                      {Array.from(new Set(styles.flatMap(s => s.available_sizes || []))).filter(Boolean).sort().map(s => (
-                        <button key={s} onClick={() => setBulkUpdateMeta((prev: any) => ({ ...prev, sizeFilter: prev.sizeFilter.includes(s) ? prev.sizeFilter.filter((x: any) => x !== s) : [...prev.sizeFilter, s] }))} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${bulkUpdateMeta.sizeFilter.includes(s) ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>{s}</button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 text-indigo-500 bg-indigo-50 p-3 rounded-xl border border-indigo-100">
-                <Info size={16}/>
-                <p className="text-[10px] font-bold uppercase tracking-tight">Only styles containing the selected color/size will be affected.</p>
+              <div className="flex items-center gap-3 text-indigo-500 bg-indigo-50 p-4 rounded-2xl border border-indigo-100 max-w-sm">
+                <Info size={24}/>
+                <p className="text-[10px] font-bold uppercase leading-relaxed">Splits are based on a union of all database attributes. Attributes not present in a specific style will be ignored during sync.</p>
               </div>
            </div>
 
@@ -116,10 +126,11 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
                     const fieldKey = `${cat.name}|${f}`;
                     const fieldData = bulkFieldValues[fieldKey];
                     if (!fieldData) return null;
+                    const isSplit = !!fieldData.variants;
 
                     return (
                       <div key={f} className={`bg-white rounded-3xl border transition-all duration-300 ${fieldData.isEnabled ? 'border-indigo-500 ring-4 ring-indigo-50 shadow-xl' : 'border-slate-200 opacity-60 grayscale'}`}>
-                         <div className="p-6 flex items-center justify-between">
+                         <div className="p-6 flex items-center justify-between border-b border-slate-50">
                             <div className="flex items-center gap-4">
                                <button 
                                   onClick={() => setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: { ...prev[fieldKey], isEnabled: !prev[fieldKey].isEnabled } }))}
@@ -129,34 +140,47 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
                                </button>
                                <div>
                                   <h5 className="font-black text-slate-800 uppercase tracking-tight">{f}</h5>
-                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Toggle to include in sync</p>
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Toggle to sync this attribute</p>
                                </div>
                             </div>
+                            
                             {fieldData.isEnabled && (
-                               <ConsumptionInput 
-                                  type={fieldData.consumption_type}
-                                  value={fieldData.consumption_val}
-                                  onChange={(t, v) => setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: { ...prev[fieldKey], consumption_type: t, consumption_val: v } }))}
-                                  onClear={() => {
-                                    const { consumption_type, consumption_val, ...rest } = fieldData;
-                                    setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: rest as any }));
-                                  }}
-                               />
+                              <div className="flex items-center gap-4">
+                                {!isSplit ? (
+                                  <>
+                                    <ConsumptionInput 
+                                      type={fieldData.consumption_type}
+                                      value={fieldData.consumption_val}
+                                      onChange={(t, v) => handleFieldChange(fieldKey, { consumption_type: t, consumption_val: v })}
+                                      onClear={() => handleFieldChange(fieldKey, { consumption_type: undefined, consumption_val: undefined })}
+                                    />
+                                    <button type="button" onClick={() => handleSplitColor(fieldKey)} className="text-[10px] font-black text-indigo-600 bg-white hover:bg-indigo-50 px-4 py-2 rounded-full flex items-center gap-2 border border-indigo-100 transition-all shadow-sm"><Split size={14}/> Split Color-wise</button>
+                                  </>
+                                ) : (
+                                  <button type="button" onClick={() => handleUnsplit(fieldKey)} className="text-[10px] font-black text-slate-500 bg-white hover:bg-slate-100 px-4 py-2 rounded-full flex items-center gap-2 border border-slate-200 transition-all shadow-sm"><X size={14}/> Merge Global</button>
+                                )}
+                              </div>
                             )}
                          </div>
 
                          {fieldData.isEnabled && (
-                           <div className="p-6 pt-0 space-y-6 animate-fade-in">
-                              <textarea 
-                                className="w-full border-2 border-slate-100 rounded-2xl p-4 h-32 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium bg-slate-50/30"
-                                placeholder={bulkUpdateMeta.strategy === 'append' ? `Content to append to existing ${f.toLowerCase()}...` : `Overwrite technical instructions for ${f.toLowerCase()}...`}
-                                value={fieldData.text}
-                                onChange={e => setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: { ...prev[fieldKey], text: e.target.value } }))}
-                              />
-                              <div className="flex items-start gap-4">
-                                 <div className="flex-1">
-                                    <label className="inline-flex items-center gap-2 px-4 py-2 bg-white border-2 border-dashed border-slate-200 rounded-xl text-[10px] font-black text-slate-400 hover:text-indigo-600 hover:border-indigo-400 cursor-pointer transition-all">
-                                      <Plus size={14}/> Add Field Attachments
+                           <div className="p-6 space-y-6 animate-fade-in bg-slate-50/20">
+                              {!isSplit ? (
+                                <div className="space-y-4">
+                                  <textarea 
+                                    className="w-full border-2 border-slate-100 rounded-2xl p-4 h-32 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium bg-white shadow-sm"
+                                    placeholder={bulkUpdateMeta.strategy === 'append' ? `Content to append...` : `Content to overwrite...`}
+                                    value={fieldData.text || ''}
+                                    onChange={e => handleFieldChange(fieldKey, { text: e.target.value })}
+                                  />
+                                  <div className="flex flex-wrap gap-2">
+                                    {fieldData.attachments?.map((a: Attachment, idx: number) => (
+                                      <div key={idx} className="flex items-center gap-1.5 bg-indigo-50 px-3 py-1.5 rounded-lg text-[9px] font-black text-indigo-700 border border-indigo-100">
+                                        <ImageIcon size={10}/> {a.name} <button onClick={() => handleFieldChange(fieldKey, { attachments: fieldData.attachments.filter((_: any, i: number) => i !== idx) })}><X size={10}/></button>
+                                      </div>
+                                    ))}
+                                    <label className="bg-white border-2 border-dashed border-slate-200 hover:border-indigo-400 text-slate-400 px-4 py-2 rounded-xl text-[10px] font-black cursor-pointer flex items-center gap-2 transition-all">
+                                      <Plus size={14}/> Add File
                                       <input 
                                         type="file" multiple className="hidden" 
                                         onChange={async (e) => {
@@ -168,20 +192,152 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
                                             const url = await uploadOrderAttachment(file);
                                             if (url) newAtts.push({ name: file.name, url, type: file.type.startsWith('image/') ? 'image' : 'document' });
                                           }
-                                          setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: { ...prev[fieldKey], attachments: [...prev[fieldKey].attachments, ...newAtts] } }));
+                                          handleFieldChange(fieldKey, { attachments: [...(fieldData.attachments || []), ...newAtts] });
                                           setIsUploading(false);
                                         }}
                                       />
                                     </label>
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                       {fieldData.attachments.map((a: Attachment, idx: number) => (
-                                         <div key={idx} className="flex items-center gap-1.5 bg-indigo-50 px-2 py-1 rounded-lg text-[9px] font-black text-indigo-700 border border-indigo-100">
-                                           {a.name} <button onClick={() => setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: { ...prev[fieldKey], attachments: prev[fieldKey].attachments.filter((_: any, i: number) => i !== idx) } }))}><X size={10}/></button>
-                                         </div>
-                                       ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="space-y-6">
+                                  {fieldData.variants?.map((v, vIdx) => (
+                                    <div key={vIdx} className="bg-white border-2 border-indigo-100 rounded-3xl p-6 shadow-sm relative group/var">
+                                      <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants?.splice(vIdx, 1); setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="absolute -top-3 -right-3 bg-red-500 text-white p-2 rounded-full shadow-lg opacity-0 group-hover/var:opacity-100 transition-opacity"><X size={16}/></button>
+                                      
+                                      <div className="mb-6 flex flex-col md:flex-row md:items-start justify-between gap-6">
+                                        <div className="flex-1">
+                                          <div className="flex items-center gap-3 mb-3">
+                                            <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest">Global Attribute Union (Colors)</label>
+                                            <div className="flex gap-1 ml-2">
+                                              <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].colors = [...unionColors]; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 hover:bg-indigo-100 transition-colors">All</button>
+                                              <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].colors = []; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[8px] font-black uppercase text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">None</button>
+                                            </div>
+                                            {!v.sizeVariants && (
+                                              <ConsumptionInput 
+                                                type={v.consumption_type}
+                                                value={v.consumption_val}
+                                                onChange={(t, val) => { const updated = { ...fieldData }; updated.variants![vIdx] = { ...v, consumption_type: t, consumption_val: val }; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}
+                                                onClear={() => { const updated = { ...fieldData }; delete updated.variants![vIdx].consumption_type; delete updated.variants![vIdx].consumption_val; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}
+                                              />
+                                            )}
+                                          </div>
+                                          <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
+                                            {unionColors.map(color => {
+                                              const isSel = v.colors.includes(color);
+                                              return (
+                                                <button key={color} type="button" onClick={() => { const updated = { ...fieldData }; const varObj = updated.variants![vIdx]; if (isSel) varObj.colors = varObj.colors.filter(c => c !== color); else varObj.colors.push(color); setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${isSel ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-50 text-slate-400 border border-slate-100 hover:bg-slate-100'}`}>{color}</button>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                        {!v.sizeVariants && (
+                                          <button type="button" onClick={() => handleAddSizeGroup(fieldKey, vIdx)} className="text-[10px] font-black text-blue-600 bg-blue-50 px-4 py-2 rounded-full border border-blue-100 flex items-center gap-2 hover:bg-blue-100 transition-all shadow-sm"><Scan size={14}/> Split by Size Group</button>
+                                        )}
+                                      </div>
+
+                                      {!v.sizeVariants ? (
+                                        <div className="space-y-4">
+                                          <textarea 
+                                            className="w-full border border-slate-100 rounded-2xl p-4 text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50/50"
+                                            placeholder="Instructions for selected color union..."
+                                            value={v.text}
+                                            onChange={e => { const updated = { ...fieldData }; updated.variants![vIdx].text = e.target.value; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}
+                                          />
+                                          <div className="flex flex-wrap gap-2">
+                                            {v.attachments.map((a, aIdx) => (
+                                              <div key={aIdx} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-[9px] font-black border border-indigo-100">
+                                                {a.name} <button onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].attachments.splice(aIdx, 1); setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}><X size={10}/></button>
+                                              </div>
+                                            ))}
+                                            <label className="bg-white border-2 border-dashed border-slate-200 text-slate-400 px-3 py-1 rounded-lg text-[10px] font-black cursor-pointer hover:bg-slate-50 transition-all">
+                                              + File
+                                              <input type="file" multiple className="hidden" onChange={async (e) => {
+                                                if (!e.target.files) return;
+                                                setIsUploading(true);
+                                                const newAtts = [];
+                                                const files = Array.from(e.target.files) as File[];
+                                                for (const file of files) {
+                                                  const url = await uploadOrderAttachment(file);
+                                                  if (url) newAtts.push({ name: file.name, url, type: file.type.startsWith('image/') ? 'image' : 'document' });
+                                                }
+                                                const updated = { ...fieldData };
+                                                updated.variants![vIdx].attachments = [...(updated.variants![vIdx].attachments || []), ...newAtts];
+                                                setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated }));
+                                                setIsUploading(false);
+                                              }}/>
+                                            </label>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-6 border-l-4 border-blue-200 pl-6 py-2">
+                                          <div className="flex justify-between items-center"><h6 className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Nested Size Sub-Splits</h6><button type="button" onClick={() => { const updated = { ...fieldData }; delete updated.variants![vIdx].sizeVariants; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[9px] font-black text-slate-400 uppercase hover:text-red-500">Discard Splits</button></div>
+                                          {v.sizeVariants.map((sv, svIdx) => (
+                                            <div key={svIdx} className="p-4 bg-blue-50/20 rounded-2xl border border-blue-100 space-y-4 relative group/size">
+                                              <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants?.splice(svIdx, 1); setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="absolute -top-2 -right-2 bg-white text-red-400 p-1.5 rounded-full shadow border opacity-0 group-hover/size:opacity-100 transition-opacity"><Trash2 size={12}/></button>
+                                              
+                                              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                                                <div className="flex-1">
+                                                  <div className="flex items-center gap-3 mb-2">
+                                                    <label className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">Apply to Sizes (Union Selection)</label>
+                                                    <div className="flex gap-1">
+                                                      <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].sizes = [...unionSizes]; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[7px] font-black uppercase text-blue-600 bg-white px-1.5 py-0.5 rounded border border-blue-100 hover:bg-blue-50 transition-colors">All</button>
+                                                      <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].sizes = []; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[7px] font-black uppercase text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">None</button>
+                                                    </div>
+                                                  </div>
+                                                  <div className="flex flex-wrap gap-1">
+                                                    {unionSizes.map(sz => {
+                                                      const isSzSel = sv.sizes.includes(sz);
+                                                      return (
+                                                        <button key={sz} type="button" onClick={() => { const updated = { ...fieldData }; const sVar = updated.variants![vIdx].sizeVariants![svIdx]; if (isSzSel) sVar.sizes = sVar.sizes.filter(s => s !== sz); else sVar.sizes.push(sz); setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${isSzSel ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-blue-300 border border-blue-100 hover:bg-blue-50'}`}>{sz}</button>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                </div>
+                                                <ConsumptionInput 
+                                                  type={sv.consumption_type}
+                                                  value={sv.consumption_val}
+                                                  onChange={(t, val) => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx] = { ...sv, consumption_type: t, consumption_val: val }; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}
+                                                  onClear={() => { const updated = { ...fieldData }; delete updated.variants![vIdx].sizeVariants![svIdx].consumption_type; delete updated.variants![vIdx].sizeVariants![svIdx].consumption_val; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}
+                                                />
+                                              </div>
+
+                                              <textarea 
+                                                className="w-full border-2 border-white rounded-2xl p-4 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none bg-white min-h-[60px]"
+                                                placeholder="Instructions for selected size union..."
+                                                value={sv.text}
+                                                onChange={e => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].text = e.target.value; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}
+                                              />
+                                              
+                                              <div className="flex flex-wrap gap-2">
+                                                {sv.attachments.map((a, aIdx) => (
+                                                  <div key={aIdx} className="flex items-center gap-1 bg-white border border-blue-50 px-2 py-1 rounded text-[9px] font-black text-blue-700">{a.name} <button onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].attachments.splice(aIdx, 1); setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}><X size={10}/></button></div>
+                                                ))}
+                                                <label className="bg-white border-2 border-dashed border-blue-100 text-blue-300 px-3 py-1 rounded-lg text-[9px] font-black cursor-pointer hover:bg-blue-50 transition-all">+ File <input type="file" multiple className="hidden" onChange={async (e) => {
+                                                  if (!e.target.files) return;
+                                                  setIsUploading(true);
+                                                  const newAtts = [];
+                                                  const files = Array.from(e.target.files) as File[];
+                                                  for (const file of files) {
+                                                    const url = await uploadOrderAttachment(file);
+                                                    if (url) newAtts.push({ name: file.name, url, type: file.type.startsWith('image/') ? 'image' : 'document' });
+                                                  }
+                                                  const updated = { ...fieldData };
+                                                  updated.variants![vIdx].sizeVariants![svIdx].attachments = [...(updated.variants![vIdx].sizeVariants![svIdx].attachments || []), ...newAtts];
+                                                  setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated }));
+                                                  setIsUploading(false);
+                                                }}/></label>
+                                              </div>
+                                            </div>
+                                          ))}
+                                          <button type="button" onClick={() => handleAddSizeGroup(fieldKey, vIdx)} className="w-full py-3 border-2 border-dashed border-blue-100 text-blue-300 text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-blue-50">+ Add Size Sub-Split</button>
+                                        </div>
+                                      )}
                                     </div>
-                                 </div>
-                              </div>
+                                  ))}
+                                  <button type="button" onClick={() => handleSplitColor(fieldKey)} className="w-full py-5 border-4 border-dashed border-slate-100 text-slate-300 text-[11px] font-black uppercase tracking-[0.2em] rounded-3xl hover:border-indigo-200 transition-all">+ Add Bulk Color Group Variant</button>
+                                </div>
+                              )}
                            </div>
                          )}
                       </div>
@@ -196,7 +352,7 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
           <button type="button" onClick={onClose} className="px-10 py-4 font-black text-slate-400 hover:text-slate-600 uppercase text-xs">Cancel</button>
           <button 
             onClick={onExecute} 
-            disabled={isUploading || (bulkUpdateMeta.target === 'color' && bulkUpdateMeta.colorFilter.length === 0) || (bulkUpdateMeta.target === 'size' && bulkUpdateMeta.sizeFilter.length === 0)}
+            disabled={isUploading}
             className="px-12 py-4 bg-orange-600 text-white rounded-2xl font-black shadow-2xl shadow-orange-200 flex items-center gap-3 active:scale-95 disabled:opacity-50 uppercase text-xs"
           >
             {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20}/>} Sync Selected Blueprint Fields

@@ -43,24 +43,14 @@ export const StyleDatabase: React.FC = () => {
   
   // Revised Bulk Update Form Structure
   const [bulkUpdateMeta, setBulkUpdateMeta] = useState<{
-    target: 'global' | 'color' | 'size';
-    colorFilter: string[];
-    sizeFilter: string[];
     strategy: 'overwrite' | 'append';
   }>({
-    target: 'global',
-    colorFilter: [],
-    sizeFilter: [],
     strategy: 'overwrite'
   });
 
   const [bulkFieldValues, setBulkFieldValues] = useState<Record<string, {
     isEnabled: boolean;
-    text: string;
-    attachments: Attachment[];
-    consumption_type?: ConsumptionType;
-    consumption_val?: number;
-  }>>({});
+  } & TechPackItem>>({});
 
   const loadData = async () => {
     const [s, t] = await Promise.all([fetchStyles(), fetchStyleTemplate()]);
@@ -242,57 +232,86 @@ export const StyleDatabase: React.FC = () => {
         setIsUploading(false);
         return;
       }
+
       for (const style of selectedStyles) {
         const updatedStyle = JSON.parse(JSON.stringify(style));
-        for (const [key, val] of enabledUpdates) {
+        const { strategy } = bulkUpdateMeta;
+
+        for (const [key, fieldData] of enabledUpdates) {
           const [category, field] = key.split('|');
-          const { target, colorFilter, sizeFilter, strategy } = bulkUpdateMeta;
-          const { text, attachments, consumption_type, consumption_val } = val;
           if (!updatedStyle.tech_pack[category]) updatedStyle.tech_pack[category] = {};
-          if (!updatedStyle.tech_pack[category][field]) updatedStyle.tech_pack[category][field] = { text: '', attachments: [] };
-          const item = updatedStyle.tech_pack[category][field] as TechPackItem;
+          
           const mergeText = (current: string, next: string) => strategy === 'overwrite' ? next : (current ? current + '\n' + next : next);
           const mergeAttachments = (current: Attachment[], next: Attachment[]) => strategy === 'overwrite' ? next : [...(current || []), ...next];
 
-          if (target === 'global') {
-            item.text = mergeText(item.text, text);
-            item.attachments = mergeAttachments(item.attachments, attachments);
-            if (consumption_type) item.consumption_type = consumption_type;
-            if (consumption_val !== undefined) item.consumption_val = consumption_val;
-            if (strategy === 'overwrite') delete (item as any).variants; 
-          } else if (target === 'color') {
-            if (!item.variants) item.variants = [];
-            const validColors = colorFilter.filter(c => updatedStyle.available_colors?.includes(c));
-            if (validColors.length > 0) {
-              let variant = item.variants.find(v => JSON.stringify(v.colors.sort()) === JSON.stringify(validColors.sort()));
-              if (!variant) {
-                variant = { colors: validColors, text: '', attachments: [] };
-                item.variants.push(variant);
+          // Use the TechPackItem structure directly from bulkFieldValues
+          const bulkItem = { ...fieldData };
+          delete (bulkItem as any).isEnabled;
+
+          const currentItem = updatedStyle.tech_pack[category][field] || { text: '', attachments: [] };
+
+          if (!bulkItem.variants) {
+            // Global Update
+            currentItem.text = mergeText(currentItem.text, bulkItem.text);
+            currentItem.attachments = mergeAttachments(currentItem.attachments, bulkItem.attachments);
+            if (bulkItem.consumption_type) currentItem.consumption_type = bulkItem.consumption_type;
+            if (bulkItem.consumption_val !== undefined) currentItem.consumption_val = bulkItem.consumption_val;
+            if (strategy === 'overwrite') delete (currentItem as any).variants;
+          } else {
+            // Variant-Based Update
+            if (strategy === 'overwrite') {
+               currentItem.variants = [];
+               delete (currentItem as any).text;
+               delete (currentItem as any).attachments;
+            } else if (!currentItem.variants) {
+               currentItem.variants = [];
+            }
+
+            bulkItem.variants.forEach(bulkVar => {
+              // Filter colors to only those the style possesses
+              const validColors = bulkVar.colors.filter(c => updatedStyle.available_colors?.includes(c));
+              if (validColors.length === 0) return; // Skip if no colors match union selection
+
+              let targetVar = currentItem.variants!.find(v => JSON.stringify(v.colors.sort()) === JSON.stringify(validColors.sort()));
+              if (!targetVar) {
+                targetVar = { colors: validColors, text: '', attachments: [] };
+                currentItem.variants!.push(targetVar);
               }
-              variant.text = mergeText(variant.text, text);
-              variant.attachments = mergeAttachments(variant.attachments, attachments);
-              if (consumption_type) variant.consumption_type = consumption_type;
-              if (consumption_val !== undefined) variant.consumption_val = consumption_val;
-            }
-          } else if (target === 'size') {
-            if (item.variants) {
-               const validSizes = sizeFilter.filter(s => updatedStyle.available_sizes?.includes(s));
-               if (validSizes.length > 0) {
-                 item.variants.forEach(v => {
-                   if (!v.sizeVariants) v.sizeVariants = [];
-                   let sv = v.sizeVariants.find(sVar => JSON.stringify(sVar.sizes.sort()) === JSON.stringify(validSizes.sort()));
-                   if (!sv) {
-                     sv = { sizes: validSizes, text: '', attachments: [] };
-                     v.sizeVariants.push(sv);
-                   }
-                   sv.text = mergeText(sv.text, text);
-                   sv.attachments = mergeAttachments(sv.attachments, attachments);
-                   if (consumption_type) sv.consumption_type = consumption_type;
-                   if (consumption_val !== undefined) sv.consumption_val = consumption_val;
-                 });
-               }
-            }
+
+              if (!bulkVar.sizeVariants) {
+                targetVar.text = mergeText(targetVar.text, bulkVar.text);
+                targetVar.attachments = mergeAttachments(targetVar.attachments, bulkVar.attachments);
+                if (bulkVar.consumption_type) targetVar.consumption_type = bulkVar.consumption_type;
+                if (bulkVar.consumption_val !== undefined) targetVar.consumption_val = bulkVar.consumption_val;
+                if (strategy === 'overwrite') delete (targetVar as any).sizeVariants;
+              } else {
+                if (strategy === 'overwrite') {
+                  targetVar.sizeVariants = [];
+                  delete (targetVar as any).text;
+                  delete (targetVar as any).attachments;
+                } else if (!targetVar.sizeVariants) {
+                  targetVar.sizeVariants = [];
+                }
+
+                bulkVar.sizeVariants.forEach(bulkSizeVar => {
+                  const validSizes = bulkSizeVar.sizes.filter(s => updatedStyle.available_sizes?.includes(s));
+                  if (validSizes.length === 0) return;
+
+                  let targetSizeVar = targetVar!.sizeVariants!.find(sv => JSON.stringify(sv.sizes.sort()) === JSON.stringify(validSizes.sort()));
+                  if (!targetSizeVar) {
+                    targetSizeVar = { sizes: validSizes, text: '', attachments: [] };
+                    targetVar!.sizeVariants!.push(targetSizeVar);
+                  }
+
+                  targetSizeVar.text = mergeText(targetSizeVar.text, bulkSizeVar.text);
+                  targetSizeVar.attachments = mergeAttachments(targetSizeVar.attachments, bulkSizeVar.attachments);
+                  if (bulkSizeVar.consumption_type) targetSizeVar.consumption_type = bulkSizeVar.consumption_type;
+                  if (bulkSizeVar.consumption_val !== undefined) targetSizeVar.consumption_val = bulkSizeVar.consumption_val;
+                });
+              }
+            });
           }
+          updatedStyle.tech_pack[category][field] = currentItem;
         }
         await upsertStyle(updatedStyle);
       }
@@ -410,6 +429,9 @@ export const StyleDatabase: React.FC = () => {
     win.document.close();
   };
 
+  const unionColors = Array.from(new Set(styles.flatMap(s => s.available_colors || []))).filter(Boolean).sort();
+  const unionSizes = Array.from(new Set(styles.flatMap(s => s.available_sizes || []))).filter(Boolean).sort();
+
   if (viewingStyle) return <StyleFullView style={viewingStyle} template={template} onBack={() => setViewingStyle(null)} onEdit={() => { setIsEditing(viewingStyle); setViewingStyle(null); }} onPrint={() => handlePrint(viewingStyle)} onDelete={() => handleDelete(viewingStyle.id)} />;
 
   return (
@@ -522,6 +544,8 @@ export const StyleDatabase: React.FC = () => {
           bulkFieldValues={bulkFieldValues} setBulkFieldValues={setBulkFieldValues}
           isUploading={isUploading} setIsUploading={setIsUploading}
           onClose={() => setIsBulkUpdateModalOpen(false)} onExecute={handleBulkUpdate}
+          unionColors={unionColors}
+          unionSizes={unionSizes}
         />
       )}
 
