@@ -24,13 +24,15 @@ interface OrderDetailsModalProps {
   onToggleSizeFormat: () => void;
   onClose: () => void;
   onPrint: () => void;
+  onPrintMaterials: () => void;
 }
 
 export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   order,
   useNumericSizes,
   onClose,
-  onPrint
+  onPrint,
+  onPrintMaterials
 }) => {
   const [linkedStyle, setLinkedStyle] = useState<Style | null>(null);
 
@@ -284,11 +286,16 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
             </div>
           </div>
         </div>
-        <div className="p-6 border-t bg-slate-50 text-right flex justify-end gap-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.03)]">
-          <button onClick={onPrint} className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 flex items-center gap-2 transition-all active:scale-95 uppercase tracking-widest text-xs">
-            <Printer size={18} /> Print Full Job Sheet
+        <div className="p-6 border-t bg-slate-50 text-right flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.03)]">
+          <button onClick={onPrintMaterials} className="px-6 py-3 bg-white text-indigo-600 border border-indigo-200 rounded-xl font-bold hover:bg-indigo-50 flex items-center gap-2 transition-all active:scale-95 uppercase tracking-widest text-[10px]">
+            <Calculator size={16} /> Print Material Forecast
           </button>
-          <button onClick={onClose} className="bg-slate-800 text-white px-10 py-3 rounded-xl font-black hover:bg-slate-700 transition-all active:scale-95 uppercase tracking-widest text-xs">Close</button>
+          <div className="flex gap-4">
+            <button onClick={onPrint} className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 shadow-xl shadow-indigo-200 flex items-center gap-2 transition-all active:scale-95 uppercase tracking-widest text-xs">
+              <Printer size={18} /> Print Job Sheet
+            </button>
+            <button onClick={onClose} className="bg-slate-800 text-white px-10 py-3 rounded-xl font-black hover:bg-slate-700 transition-all active:scale-95 uppercase tracking-widest text-xs">Close</button>
+          </div>
         </div>
       </div>
     </div>

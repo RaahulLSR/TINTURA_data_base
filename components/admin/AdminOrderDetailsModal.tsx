@@ -143,90 +143,131 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     }
   };
 
+  const handlePrintMaterialForecast = () => {
+    const detailedReqs = getDetailedRequirements();
+    if (detailedReqs.length === 0) return alert("No projected requirements found.");
+
+    const formattedNo = formatOrderNumber(order);
+    const win = window.open('', 'MaterialForecast', 'width=1000,height=800');
+    if (win) {
+      win.document.write(`
+        <html><head><title>Forecast - ${formattedNo}</title>
+        <style>
+          body { font-family: sans-serif; padding: 30px; font-size: 11px; color: #1e293b; }
+          .header { text-align: center; border-bottom: 3px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+          .brand { font-size: 22px; font-weight: 900; }
+          .title { font-size: 14px; font-weight: bold; text-transform: uppercase; margin-top: 5px; color:#64748b; letter-spacing:1px; }
+          .meta { margin-bottom: 20px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; background: #f8fafc; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px; }
+          .section { margin-bottom: 20px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; page-break-inside: avoid; }
+          .section-header { background: #334155; color: #fff; padding: 8px 12px; font-weight: bold; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; vertical-align: top; }
+          th { background: #f1f5f9; text-transform: uppercase; font-size: 9px; color: #64748b; }
+          .qty-val { font-weight: 900; color: #4f46e5; font-size: 13px; }
+          .img-grid { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+          .img-grid img { height: 60px; border-radius: 3px; border: 1px solid #ddd; }
+          .footer { margin-top: 30px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }
+        </style>
+        </head><body>
+          <div class="header">
+            <div class="brand">TINTURA SST</div>
+            <div class="title">Projected Material Requirements Forecast</div>
+          </div>
+          <div class="meta">
+            <div><strong>Order:</strong> ${formattedNo}</div>
+            <div><strong>Style:</strong> ${order.style_number}</div>
+            <div><strong>Batch:</strong> ${order.quantity} PCS</div>
+            <div><strong>Date:</strong> ${new Date().toLocaleDateString()}</div>
+          </div>
+          ${detailedReqs.map(req => `
+            <div class="section">
+              <div class="section-header"><span>${req.name}</span><span style="background:rgba(255,255,255,0.2); padding:2px 8px; border-radius:4px;">TOTAL JOB REQ: ${req.total}</span></div>
+              <table>
+                <thead><tr><th>Segment Scope</th><th style="text-align:center">Base Qty</th><th style="text-align:right">Calculated Req.</th><th>Instructions & Visuals</th></tr></thead>
+                <tbody>${req.breakdown.map(b => `
+                  <tr>
+                    <td><strong>${b.label}</strong></td>
+                    <td style="text-align:center">${b.count}</td>
+                    <td style="text-align:right" class="qty-val">${b.calc}</td>
+                    <td>
+                        <div style="font-weight:bold; margin-bottom:4px;">${b.text || '---'}</div>
+                        <div class="img-grid">${b.attachments.filter(a => a.type === 'image').map(img => `<img src="${img.url}"/>`).join('')}</div>
+                    </td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          `).join('')}
+          <div class="footer">Document generated via Tintura SST MES. Estimates are for internal production planning only.</div>
+          <script>window.onload = () => { window.print(); };</script>
+        </body></html>
+      `);
+      win.document.close();
+    }
+  };
+
   const handlePrint = async () => {
     let techPackHtml = '';
-    let reqSheetHtml = '';
+    let preProductionHtml = '';
     
     const styleRefPart = order.style_number.split(' - ')[0].trim();
     if (styleRefPart) {
         const [style, template] = await Promise.all([ fetchStyleByNumber(styleRefPart), fetchStyleTemplate() ]);
         if (style && template) {
-            const detailedReqs = getDetailedRequirements();
-            if (detailedReqs.length > 0) {
-              reqSheetHtml = `
-                <div style="margin-top:50px; page-break-before:always;">
-                  <h2 style="background:#1e293b; color:#fff; padding:20px 30px; font-size:24px; text-transform:uppercase; letter-spacing:4px; border-radius:12px; font-weight:900;">Detailed Material Forecast</h2>
-                  <div style="margin-top:20px;">
-                    ${detailedReqs.map(req => `
-                      <div style="margin-bottom:40px; border:2px solid #e2e8f0; border-radius:20px; overflow:hidden; background:#fff;">
-                        <div style="background:#f8fafc; padding:15px 25px; border-bottom:2px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
-                          <span style="font-size:20px; font-weight:900; text-transform:uppercase; color:#1e293b;">${req.name}</span>
-                          <span style="font-size:22px; font-weight:900; color:#4f46e5;">TOTAL: ${req.total}</span>
+            const renderField = (f: string, catName: string) => {
+                const item = style.tech_pack[catName]?.[f] || { text: 'N/A', attachments: [] };
+                let contentHtml = '';
+                if (item.variants) {
+                  contentHtml = item.variants.map(v => {
+                    let sizeHtml = '';
+                    const vImgs = v.attachments.filter(a => a.type === 'image');
+                    if (v.sizeVariants) {
+                      sizeHtml = `<div style="margin-top:8px; display:grid; grid-template-columns:1fr; gap:6px;">${v.sizeVariants.map(sv => {
+                        const svImgs = sv.attachments.filter(a => a.type === 'image');
+                        return `
+                        <div style="background:#fff; border:1px solid #ddd; border-left:3px solid #4f46e5; padding:8px; border-radius:4px; page-break-inside:avoid;">
+                          <div style="font-size:9px; font-weight:bold; color:#4f46e5; margin-bottom:2px;">SIZES: ${sv.sizes.join(', ')}</div>
+                          <div style="font-size:11px; font-weight:bold;">${sv.text || '---'}</div>
+                          <div style="display:grid; grid-template-columns:${svImgs.length === 1 ? '1fr' : '1fr 1fr'}; gap:5px; margin-top:5px;">
+                            ${svImgs.map(a => `<img src="${a.url}" style="width:100%; border-radius:2px; border:1px solid #ddd;"/>`).join('')}
+                          </div>
                         </div>
-                        <div style="padding:20px;">
-                          <table style="width:100%; border-collapse:collapse;">
-                            <thead>
-                              <tr style="background:#f1f5f9;">
-                                <th style="padding:10px; border:1px solid #cbd5e1; text-align:left; font-size:12px;">Segment</th>
-                                <th style="padding:10px; border:1px solid #cbd5e1; text-align:center; font-size:12px;">Job Qty</th>
-                                <th style="padding:10px; border:1px solid #cbd5e1; text-align:right; font-size:12px;">Required</th>
-                                <th style="padding:10px; border:1px solid #cbd5e1; text-align:left; font-size:12px;">Technical Specs</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              ${req.breakdown.map(b => `
-                                <tr>
-                                  <td style="padding:12px; border:1px solid #cbd5e1; font-weight:bold; font-size:14px;">${b.label}</td>
-                                  <td style="padding:12px; border:1px solid #cbd5e1; text-align:center; font-size:14px;">${b.count}</td>
-                                  <td style="padding:12px; border:1px solid #cbd5e1; text-align:right; font-weight:900; color:#4f46e5; font-size:16px;">${b.calc}</td>
-                                  <td style="padding:12px; border:1px solid #cbd5e1; font-size:13px; color:#475569;">
-                                    <div>${b.text || '---'}</div>
-                                    <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                                      ${b.attachments.filter(a => a.type === 'image').map(img => `<img src="${img.url}" style="width:100%; border-radius:8px;" />`).join('')}
-                                    </div>
-                                  </td>
-                                </tr>
-                              `).join('')}
-                            </tbody>
-                          </table>
+                      `}).join('')}</div>`;
+                    }
+                    return `
+                      <div style="border:1px solid #e2e8f0; padding:10px; border-radius:6px; margin-top:8px; background:#f8fafc; page-break-inside:avoid;">
+                        <div style="margin-bottom:4px;">${v.colors.map(c => `<span style="background:#334155; color:#fff; font-size:8px; font-weight:bold; padding:1px 5px; border-radius:2px; margin-right:3px; text-transform:uppercase;">${c}</span>`).join('')}</div>
+                        <div style="font-size:12px; font-weight:bold;">${v.text || '---'}</div>
+                        <div style="display:grid; grid-template-columns:${vImgs.length === 1 ? '1fr' : '1fr 1fr'}; gap:5px; margin-top:5px;">
+                          ${vImgs.map(a => `<img src="${a.url}" style="width:100%; border-radius:3px; border:1px solid #ddd;"/>`).join('')}
                         </div>
+                        ${sizeHtml}
+                      </div>`;
+                  }).join('');
+                } else {
+                  const itemImgs = item.attachments.filter(a => a.type === 'image');
+                  contentHtml = `
+                    <div style="font-size:12px; background:#f8fafc; padding:10px; border-radius:6px; border:1px solid #e2e8f0; font-weight:bold;">
+                      ${item.text || '---'}
+                      <div style="display:grid; grid-template-columns:${itemImgs.length === 1 ? '1fr' : '1fr 1fr'}; gap:8px; margin-top:8px;">
+                        ${itemImgs.map(a => `<img src="${a.url}" style="width:100%; border-radius:4px; border:1px solid #ddd;"/>`).join('')}
                       </div>
-                    `).join('')}
-                  </div>
-                </div>
-              `;
+                    </div>`;
+                }
+                return `<div style="margin-bottom:12px; page-break-inside:avoid;"><div style="font-size:9px; font-weight:bold; color:#94a3b8; text-transform:uppercase; margin-bottom:5px;">${f}</div>${contentHtml}</div>`;
+            };
+
+            const preProdCat = template.config.find(c => c.name.toLowerCase().includes('pre production'));
+            if (preProdCat) {
+                preProductionHtml = `
+                    <div style="page-break-before:always; margin-top:30px;">
+                        <h3 style="background:#334155; color:#fff; padding:6px 12px; font-size:11px; text-transform:uppercase; border-radius:4px;">Pre-Production Requirements</h3>
+                        <div style="padding:10px 0;">${preProdCat.fields.map(f => renderField(f, preProdCat.name)).join('')}</div>
+                    </div>`;
             }
 
-            techPackHtml = template.config.filter(c => c.name !== "General Info").map(cat => {
-                const isPreProd = cat.name.toLowerCase().includes('pre production');
-                const variantMetaHtml = isPreProd ? `<div style="background:#f1f5f9; padding:20px; border-radius:8px; margin-bottom:20px; display:grid; grid-template-columns:1fr 1fr; gap:20px; border:1px solid #cbd5e1;"><div><span style="font-size:10px; font-weight:900; color:#64748b; text-transform:uppercase;">Blueprint Colours</span><br/><strong style="font-size:16px;">${style.available_colors?.join(', ') || '---'}</strong></div><div><span style="font-size:10px; font-weight:900; color:#64748b; text-transform:uppercase;">Size Range</span><br/><strong style="font-size:16px;">${style.available_sizes?.join(', ') || '---'}</strong></div></div>` : '';
-                const fields = cat.fields.map(f => {
-                    const item = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
-                    let contentHtml = '';
-                    if (item.variants) {
-                      contentHtml = item.variants.map(v => {
-                        let sizeHtml = '';
-                        if (v.sizeVariants) {
-                          sizeHtml = `<div style="margin-top:15px; display:grid; grid-template-columns:1fr; gap:12px;">${v.sizeVariants.map(sv => `
-                            <div style="background:#fff; border:1px solid #e2e8f0; border-left:10px solid #2563eb; padding:20px; border-radius:12px;">
-                              <div style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px;">
-                                ${sv.sizes.map(sz => `<span style="background:#2563eb; color:#fff; display:inline-block; padding:4px 10px; border-radius:6px; font-weight:900; font-size:18px;">SIZE: ${sz}</span>`).join('')}
-                              </div>
-                              <div style="font-size:20px; font-weight:900; color:#1e293b; line-height:1.3;">${sv.text || '---'}</div>
-                              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:15px;">
-                                ${sv.attachments.filter(a => a.type === 'image').map(img => `<img src="${img.url}" style="width:100%; border-radius:10px; border:1px solid #eee;" />`).join('')}
-                              </div>
-                            </div>
-                          `).join('')}</div>`;
-                        }
-                        return `<div style="border:2px solid #e2e8f0; padding:20px; border-radius:15px; margin-top:15px; background:#f8fafc; break-inside:avoid;"><div style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;"><div>${v.colors.map(c => `<span style="background:#1e293b; color:#fff; font-size:10px; font-weight:900; padding:4px 10px; border-radius:5px; text-transform:uppercase; margin-right:5px;">${c}</span>`).join('')}</div> ${!v.sizeVariants && v.consumption_type ? `<div style="font-weight:900; color:#1e293b; border:1px solid #1e293b; padding:4px 10px; border-radius:6px;">${v.consumption_val} ${v.consumption_type === 'items_per_pc' ? 'Items / PC' : 'PCS / Item'}</div>` : ''}</div><div style="font-size:22px; color:#1e293b; font-weight:900; line-height:1.3;">${v.text || '---'}</div><div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:15px;">${v.attachments.filter(a => a.type === 'image').map(img => `<img src="${img.url}" style="width:100%; border-radius:10px; border:1px solid #eee;" />`).join('')}</div>${sizeHtml}</div>`;
-                      }).join('');
-                    } else {
-                      contentHtml = `<div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; padding:25px; border-radius:15px; border:2px solid #e2e8f0;"><div style="font-size:24px; font-weight:900; color:#1e293b; line-height:1.3;">${item.text || '---'}</div> ${item.consumption_type ? `<div style="background:#1e293b; color:#fff; padding:10px 20px; border-radius:8px; font-weight:900; font-size:20px; text-align:center;">${item.consumption_val}<br/><small style="font-size:10px; opacity:0.8; letter-spacing:1px;">${item.consumption_type === 'items_per_pc' ? 'ITEMS / PC' : 'PCS / ITEM'}</small></div>` : ''}</div>`;
-                    }
-                    return `<div style="margin-bottom:40px; border-bottom:1px solid #e2e8f0; padding-bottom:30px; break-inside:avoid;"><div style="font-size:12px; font-weight:900; color:#64748b; text-transform:uppercase; margin-bottom:12px; letter-spacing:1px; display:flex; align-items:center; gap:8px;"><div style="width:8px; height:8px; background:#4f46e5; border-radius:50%;"></div>${f}</div>${contentHtml}</div>`;
-                }).join('');
-                return `<div style="margin-top:40px; page-break-before:always;"><h3 style="background:#1e293b; color:#fff; padding:15px 25px; font-size:18px; text-transform:uppercase; letter-spacing:3px; border-radius:12px;">${cat.name}</h3><div style="padding:15px 5px;">${variantMetaHtml}${fields}</div></div>`;
+            techPackHtml = template.config.filter(c => c.name !== "General Info" && !c.name.toLowerCase().includes('pre production')).map(cat => {
+                return `<div style="margin-top:20px; page-break-inside:avoid;"><h3 style="background:#f1f5f9; color:#334155; padding:6px 12px; font-size:11px; text-transform:uppercase; border-radius:4px; border-left:4px solid #334155;">${cat.name}</h3><div style="padding:5px 0;">${cat.fields.map(f => renderField(f, cat.name)).join('')}</div></div>`;
             }).join('');
         }
     }
@@ -234,11 +275,56 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     const formattedNo = formatOrderNumber(order);
     const headers = order.size_format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
     const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
-    const breakdownRows = (order.size_breakdown || []).map(row => `<tr><td style="text-align:left; font-weight:bold;">${row.color}</td>${keys.map(k => `<td>${(row as any)[k]}</td>`).join('')}<td style="font-weight:bold;">${getRowTotal(row)}</td></tr>`).join('');
+    const breakdownRows = (order.size_breakdown || []).map(row => `<tr><td style="text-align:left; font-weight:bold; border: 1px solid #333;">${row.color}</td>${keys.map(k => `<td style="border: 1px solid #333;">${(row as any)[k]}</td>`).join('')}<td style="font-weight:bold; background:#f1f5f9; border: 1px solid #333;">${getRowTotal(row)}</td></tr>`).join('');
+
+    const orderImgs = (order.attachments || []).filter(a => a.type === 'image');
+    const attachmentGridStyle = `display:grid; grid-template-columns:${orderImgs.length === 1 ? '1fr' : '1fr 1fr'}; gap:10px; margin-top:10px;`;
 
     const win = window.open('', 'OrderPrint', 'width=1100,height=850');
     if (win) {
-        win.document.write(`<html><head><title>Job Sheet - ${formattedNo}</title><style>body { font-family: sans-serif; padding: 50px; color: #1e293b; } .header { text-align: center; border-bottom: 8px solid #000; padding-bottom: 25px; margin-bottom: 35px; } .brand { font-size: 42px; font-weight: 900; } .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 25px; margin-bottom: 40px; } .box { padding: 20px; border: 3px solid #1e293b; border-radius:12px; } .label { font-size: 11px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing:1px; } .value { font-size: 22px; font-weight: 900; } table { width: 100%; border-collapse: collapse; margin-top: 25px; } th, td { border: 2px solid #1e293b; padding: 15px; text-align: center; } th { background: #f1f5f9; font-weight:900; } .section-title { font-size: 20px; font-weight: 900; border-bottom: 4px solid #1e293b; margin-top: 50px; margin-bottom: 20px; text-transform: uppercase; letter-spacing:2px; }</style></head><body><div class="header"><div class="brand">TINTURA SST</div><div style="font-size:18px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:4px; margin-top:5px;">Manufacturing Execution Document</div></div><div class="grid"><div class="box"><span class="label">Job ID</span><div class="value">${formattedNo}</div></div><div class="box"><span class="label">Technical Reference</span><div class="value">${order.style_number}</div></div><div class="box"><span class="label">Job Volume</span><div class="value">${order.quantity} PCS</div></div></div><div class="section-title">Job Matrix Breakdown</div><table><thead><tr><th style="text-align:left;">Color Group</th>${headers.map(h => `<th>${h}</th>`).join('')}<th>Sum</th></tr></thead><tbody>${breakdownRows}</tbody></table><div class="section-title">Master Production Instructions</div><div style="padding:25px; border:3px solid #1e293b; font-size:24px; font-weight:900; border-radius:16px; background:#f8fafc; line-height:1.3;">${order.description || 'N/A'}</div>${reqSheetHtml}${techPackHtml}<script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script></body></html>`);
+        win.document.write(`<html><head><title>Job Sheet - ${formattedNo}</title>
+        <style>
+          body { font-family: sans-serif; padding: 30px; color: #1e293b; font-size: 10px; line-height: 1.3; }
+          .header { text-align: center; border-bottom: 3.5px solid #000; padding-bottom: 12px; margin-bottom: 18px; }
+          .brand { font-size: 28px; font-weight: 900; }
+          .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 15px; }
+          .box { padding: 8px 12px; border: 1.5px solid #1e293b; border-radius:6px; }
+          .label { font-size: 7px; font-weight: bold; color: #64748b; text-transform: uppercase; margin-bottom:2px; display:block; }
+          .value { font-size: 13px; font-weight: bold; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+          th, td { border: 1px solid #1e293b; padding: 6px; text-align: center; }
+          th { background: #f8fafc; font-weight: bold; font-size: 8px; text-transform:uppercase; }
+          .section-title { font-size: 12px; font-weight: 900; border-bottom: 1.5px solid #1e293b; margin-top: 20px; margin-bottom: 8px; text-transform: uppercase; padding-bottom:2px; }
+          .notes-box { padding: 10px 15px; border: 1.5px solid #1e293b; background: #f8fafc; border-radius: 6px; font-size: 11px; font-weight:bold; white-space: pre-wrap; }
+        </style>
+        </head><body>
+          <div class="header"><div class="brand">TINTURA SST</div><div style="font-size:11px; font-weight:bold; color:#64748b; text-transform:uppercase; letter-spacing:1px;">Job Execution Document</div></div>
+          <div class="grid">
+            <div class="box"><span class="label">Job ID</span><div class="value">${formattedNo}</div></div>
+            <div class="box"><span class="label">Style</span><div class="value">${order.style_number}</div></div>
+            <div class="box"><span class="label">Batch Qty</span><div class="value">${order.quantity} PCS</div></div>
+            <div class="box"><span class="label">Target Date</span><div class="value">${order.target_delivery_date}</div></div>
+          </div>
+          
+          <div class="section-title">Color & Size Matrix</div>
+          <table><thead><tr><th style="text-align:left; border:1px solid #333;">Variant</th>${headers.map(h => `<th style="border:1px solid #333;">${h}</th>`).join('')}<th style="border:1px solid #333;">Total</th></tr></thead><tbody>${breakdownRows}</tbody></table>
+          
+          <div class="section-title">Manufacturing Notes</div>
+          <div class="notes-box">${order.description || 'No notes provided.'}</div>
+
+          ${orderImgs.length > 0 ? `
+            <div class="section-title">Visual References</div>
+            <div style="${attachmentGridStyle}">
+              ${orderImgs.map(img => `<div style="border:1px solid #e2e8f0; padding:8px; text-align:center; background:#fff; page-break-inside:avoid;"><img src="${img.url}" style="width:100%; border-radius:4px;"/><div style="font-size:8px; margin-top:4px; font-weight:bold; color:#64748b;">${img.name}</div></div>`).join('')}
+            </div>
+          ` : ''}
+
+          ${preProductionHtml}
+          <div style="page-break-before: auto;">
+            ${techPackHtml}
+          </div>
+          <script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script>
+        </body></html>`);
         win.document.close();
     }
   };
@@ -314,7 +400,11 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
           
           <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm flex flex-col"><h4 className="font-black text-indigo-900 uppercase text-[10px] flex items-center gap-2 mb-6"><Clock size={16}/> Lifecycle status log</h4><div className="space-y-6 max-h-[400px] overflow-y-auto pr-4">{modalLogs.map(log => (<div key={log.id} className="flex gap-4 border-l-4 border-indigo-100 pl-6 pb-2 transition-all hover:border-indigo-400"><div className="font-black text-[10px] text-slate-400 uppercase leading-none pt-1">{new Date(log.created_at).toLocaleDateString()}<br/><span className="text-indigo-400 opacity-60 font-bold">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span></div><div className="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-200"><p className="text-slate-700 font-bold leading-snug">{log.message}</p></div></div>))}</div></div>
         </div>
-        <div className="p-6 border-t bg-slate-50 flex justify-between items-center"><button onClick={() => { if(confirm("Permanently delete this order?")) deleteOrder(order.id).then(() => {onRefresh(); onClose();}); }} className="p-3 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all"><Trash2 size={24}/></button><div className="flex items-center gap-4"><button onClick={handlePrint} className="px-8 py-3 bg-white text-indigo-600 border-2 border-indigo-600 rounded-xl font-black uppercase text-xs flex items-center gap-2 shadow-sm hover:bg-indigo-50 transition-all"><Printer size={16}/> Print Job Sheet</button><button onClick={onClose} className="px-10 py-3 bg-slate-800 text-white rounded-xl font-black uppercase text-xs hover:bg-slate-700 transition-all">Close</button>{isEditing && <button onClick={handleSave} disabled={isUploading} className="bg-indigo-600 text-white px-10 py-3 rounded-xl font-black uppercase text-xs shadow-lg shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all">{isUploading ? <Loader2 className="animate-spin inline mr-2" size={16}/> : null}{isUploading ? 'Saving...' : 'Save Job'}</button>}</div></div>
+        <div className="p-6 border-t bg-slate-50 flex justify-between items-center"><button onClick={() => { if(confirm("Permanently delete this order?")) deleteOrder(order.id).then(() => {onRefresh(); onClose();}); }} className="p-3 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all"><Trash2 size={24}/></button><div className="flex items-center gap-4">
+          <button onClick={handlePrintMaterialForecast} className="px-6 py-3 bg-white text-indigo-600 border border-indigo-600 rounded-xl font-black uppercase text-[10px] flex items-center gap-2 shadow-sm hover:bg-indigo-50 transition-all">
+            <Calculator size={16}/> Print Material Forecast
+          </button>
+          <button onClick={handlePrint} className="px-8 py-3 bg-white text-indigo-600 border-2 border-indigo-600 rounded-xl font-black uppercase text-xs flex items-center gap-2 shadow-sm hover:bg-indigo-50 transition-all"><Printer size={16}/> Print Job Sheet</button><button onClick={onClose} className="px-10 py-3 bg-slate-800 text-white rounded-xl font-black uppercase text-xs hover:bg-slate-700 transition-all">Close</button>{isEditing && <button handleSave={handleSave} disabled={isUploading} className="bg-indigo-600 text-white px-10 py-3 rounded-xl font-black uppercase text-xs shadow-lg shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all">{isUploading ? <Loader2 className="animate-spin inline mr-2" size={16}/> : null}{isUploading ? 'Saving...' : 'Save Job'}</button>}</div></div>
       </div>
     </div>
   );
