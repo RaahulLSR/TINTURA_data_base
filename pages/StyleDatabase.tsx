@@ -357,6 +357,33 @@ export const StyleDatabase: React.FC = () => {
   const handlePrint = (style: Style) => {
     const win = window.open('', 'StylePrint', 'width=1000,height=800');
     if (!win || !template) return;
+
+    // Helper to render attachments in a grid for the printout
+    const renderAttachmentsHtml = (attachments: Attachment[]) => {
+      if (!attachments || attachments.length === 0) return '';
+      const images = attachments.filter(a => a.type === 'image');
+      const docs = attachments.filter(a => a.type === 'document');
+      
+      let html = '<div style="margin-top: 15px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">';
+      images.forEach(img => {
+        html += `
+          <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; break-inside: avoid; background: #fff;">
+            <img src="${img.url}" style="width: 100%; display: block;"/>
+            <div style="padding: 6px; font-size: 8px; font-weight: bold; background: #fff; text-align: center; color: #64748b; border-top: 1px solid #e2e8f0;">${img.name}</div>
+          </div>`;
+      });
+      html += '</div>';
+      
+      if (docs.length > 0) {
+        html += '<div style="margin-top: 8px; font-size: 9px; color: #4f46e5; font-weight: bold; padding-left: 5px;">';
+        docs.forEach(doc => {
+          html += `<div>• DOCUMENT: ${doc.name}</div>`;
+        });
+        html += '</div>';
+      }
+      return html;
+    };
+
     const techPackHtml = template.config.filter(c => c.name !== "General Info").map(cat => {
         const fields = cat.fields.map(f => {
             const item = style.tech_pack[cat.name]?.[f] || { text: 'N/A', attachments: [] };
@@ -366,63 +393,118 @@ export const StyleDatabase: React.FC = () => {
                     let sizeHtml = '';
                     if (v.sizeVariants) {
                         sizeHtml = `<div style="margin-top:15px; display:grid; grid-template-columns:1fr; gap:12px;">${v.sizeVariants.map(sv => `
-                            <div style="background:#fff; border:1px solid #e2e8f0; border-left:10px solid #2563eb; padding:20px; border-radius:12px;">
+                            <div style="background:#fff; border:1px solid #e2e8f0; border-left:10px solid #2563eb; padding:20px; border-radius:12px; break-inside:avoid;">
                                 <div style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px;">
-                                    ${sv.sizes.map(sz => `<span style="background:#2563eb; color:#fff; display:inline-block; padding:4px 10px; border-radius:6px; font-weight:900; font-size:18px;">SIZE: ${sz}</span>`).join('')}
+                                    ${sv.sizes.map(sz => `<span style="background:#2563eb; color:#fff; display:inline-block; padding:4px 10px; border-radius:6px; font-weight:900; font-size:16px;">SIZE: ${sz}</span>`).join('')}
+                                    ${sv.consumption_type ? `<span style="background:#f1f5f9; color:#1e293b; padding:4px 10px; border-radius:6px; font-weight:bold; font-size:12px;">Ratio: ${sv.consumption_val} ${sv.consumption_type === 'items_per_pc' ? 'Items/PC' : 'PCS/Item'}</span>` : ''}
                                 </div>
-                                <div style="font-size:20px; font-weight:900; color:#1e293b; line-height:1.3;">${sv.text || '---'}</div>
+                                <div style="font-size:18px; font-weight:900; color:#1e293b; line-height:1.3;">${sv.text || '---'}</div>
+                                ${renderAttachmentsHtml(sv.attachments)}
                             </div>
                         `).join('')}</div>`;
                     }
-                    return `<div style="border:2px solid #e2e8f0; padding:20px; border-radius:15px; margin-top:15px; background:#f8fafc; break-inside:avoid;"><div style="margin-bottom:10px;">${v.colors.map(c => `<span style="background:#1e293b; color:#fff; font-size:10px; font-weight:900; padding:4px 10px; border-radius:5px; text-transform:uppercase; margin-right:5px;">${c}</span>`).join('')}</div><div style="font-size:22px; color:#1e293b; font-weight:900; line-height:1.3;">${v.text || '---'}</div>${sizeHtml}</div>`;
+                    return `
+                      <div style="border:2px solid #e2e8f0; padding:20px; border-radius:15px; margin-top:15px; background:#f8fafc; break-inside:avoid;">
+                        <div style="margin-bottom:10px; display: flex; justify-content: space-between; align-items: center;">
+                          <div>${v.colors.map(c => `<span style="background:#1e293b; color:#fff; font-size:10px; font-weight:900; padding:4px 10px; border-radius:5px; text-transform:uppercase; margin-right:5px;">${c}</span>`).join('')}</div>
+                          ${v.consumption_type ? `<div style="font-size: 10px; font-weight: bold; color: #4f46e5;">RATIO: ${v.consumption_val} ${v.consumption_type === 'items_per_pc' ? 'Items/PC' : 'PCS/Item'}</div>` : ''}
+                        </div>
+                        <div style="font-size:20px; color:#1e293b; font-weight:900; line-height:1.3;">${v.text || '---'}</div>
+                        ${renderAttachmentsHtml(v.attachments)}
+                        ${sizeHtml}
+                      </div>`;
                 }).join('');
-            } else contentHtml = `<div style="font-size:24px; font-weight:900; color:#1e293b; background:#f8fafc; padding:25px; border-radius:15px; border:2px solid #e2e8f0; line-height:1.3;">${item.text || '---'}</div>`;
+            } else {
+              contentHtml = `
+                <div style="break-inside:avoid;">
+                  <div style="font-size:24px; font-weight:900; color:#1e293b; background:#f8fafc; padding:25px; border-radius:15px; border:2px solid #e2e8f0; line-height:1.3;">
+                    ${item.text || '---'}
+                    ${item.consumption_type ? `<div style="margin-top: 10px; font-size: 12px; font-weight: bold; color: #4f46e5; background: #fff; padding: 5px 10px; border-radius: 6px; display: inline-block; border: 1px solid #e2e8f0;">Global Ratio: ${item.consumption_val} ${item.consumption_type === 'items_per_pc' ? 'Items/PC' : 'PCS/Item'}</div>` : ''}
+                  </div>
+                  ${renderAttachmentsHtml(item.attachments)}
+                </div>`;
+            }
             return `
-                <div style="margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:10px; break-inside:avoid;">
-                    <div style="font-size:11px; font-weight:bold; color:#666; text-transform:uppercase; margin-bottom:4px;">${f}</div>
+                <div style="margin-bottom:30px; border-bottom:1px solid #eee; padding-bottom:15px; break-inside:avoid;">
+                    <div style="font-size:11px; font-weight:bold; color:#666; text-transform:uppercase; margin-bottom:6px; letter-spacing: 1px;">${f}</div>
                     ${contentHtml}
                 </div>`;
         }).join('');
         return `
             <div style="margin-top:40px; page-break-before:always;">
-                <h3 style="background:#000; color:#fff; padding:10px; font-size:14px; text-transform:uppercase; letter-spacing:1px;">${cat.name}</h3>
-                <div style="padding:10px;">${fields}</div>
+                <h3 style="background:#1e293b; color:#fff; padding:12px 20px; font-size:14px; text-transform:uppercase; letter-spacing:2px; border-radius: 8px;">${cat.name}</h3>
+                <div style="padding:15px;">${fields}</div>
             </div>`;
     }).join('');
+
     win.document.write(`
       <html>
         <head>
           <title>Tech Pack - ${style.style_number}</title>
           <style>
-            body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; font-size: 14px; color: #333; }
-            .header { text-align: center; border-bottom: 5px solid #000; padding-bottom: 20px; margin-bottom: 30px; }
-            .brand { font-size: 32px; font-weight: 900; text-transform: uppercase; margin: 0; }
-            .title { font-size: 18px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #666; }
+            body { font-family: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif; padding: 40px; font-size: 14px; color: #333; line-height: 1.4; background: #fff; }
+            .header { text-align: center; border-bottom: 5px solid #1e293b; padding-bottom: 25px; margin-bottom: 35px; }
+            .brand { font-size: 36px; font-weight: 900; text-transform: uppercase; margin: 0; color: #1e293b; }
+            .title { font-size: 18px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #64748b; letter-spacing: 2px; }
             .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; }
-            .box { padding: 15px; border: 2px solid #333; border-radius: 6px; }
-            .label { font-size: 11px; text-transform: uppercase; color: #666; font-weight: bold; }
-            .value { font-size: 16px; font-weight: bold; }
-            .section-title { font-size: 18px; font-weight: 900; border-bottom: 3px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; }
+            .box { padding: 15px; border: 2px solid #e2e8f0; border-radius: 12px; background: #fcfcfc; }
+            .label { font-size: 10px; text-transform: uppercase; color: #94a3b8; font-weight: 900; letter-spacing: 1px; }
+            .value { font-size: 16px; font-weight: 900; color: #1e293b; margin-top: 4px; }
+            .section-title { font-size: 20px; font-weight: 900; border-bottom: 4px solid #1e293b; padding-bottom: 8px; margin-top: 45px; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; color: #1e293b; }
+            .summary-box { padding: 25px; border: 2px solid #e2e8f0; min-height: 80px; background:#f8fafc; border-radius:15px; font-size:18px; font-weight: bold; color: #475569; line-height: 1.5; white-space: pre-wrap; }
+            @media print {
+              body { padding: 20px; }
+              @page { margin: 1.5cm; }
+            }
           </style>
         </head>
         <body>
           <div class="header">
             <div class="brand">TINTURA SST</div>
-            <div class="title">Technical Package (Style Blueprint)</div>
+            <div class="title">Master Technical Specification Package</div>
           </div>
+          
           <div class="grid">
             <div class="box"><span class="label">Style Number</span><div class="value">${style.style_number}</div></div>
-            <div class="box"><span class="label">Category</span><div class="value">${style.category}</div></div>
-            <div class="box"><span class="label">Garment Type</span><div class="value">${style.category}</div></div>
-            <div class="box"><span class="label">Demographic</span><div class="value">${style.demographic}</div></div>
-            <div class="box"><span class="label">Packing Type</span><div class="value">${style.packing_type} (${style.pcs_per_box} pcs)</div></div>
-            <div class="box"><span class="label">Date Generated</span><div class="value">${new Date().toLocaleDateString()}</div></div>
+            <div class="box"><span class="label">Garment Category</span><div class="value">${style.category}</div></div>
+            <div class="box"><span class="label">Style Specification</span><div class="value">${style.garment_type || 'N/A'}</div></div>
+            <div class="box"><span class="label">Market Segment</span><div class="value">${style.demographic || 'N/A'}</div></div>
+            <div class="box"><span class="label">Packing Specs</span><div class="value">${style.packing_type} (${style.pcs_per_box} pcs)</div></div>
+            <div class="box"><span class="label">Issue Date</span><div class="value">${new Date().toLocaleDateString()}</div></div>
           </div>
-          <div class="section-title">Summary & Notes</div>
-          <div style="padding: 20px; border: 2px solid #333; min-height: 60px; background:#fcfcfc; border-radius:6px; font-size:16px;">
-            ${style.style_text || "No technical notes provided."}
+
+          <div class="section-title">Color & Size Blueprint</div>
+          <div style="display: flex; gap: 20px; margin-bottom: 40px;">
+            <div style="flex: 1; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+              <span class="label">Approved Palette</span>
+              <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;">
+                ${(style.available_colors || []).filter(c => c).map(c => `<span style="background:#f1f5f9; color:#1e293b; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:6px; border: 1px solid #e2e8f0; text-transform: uppercase;">${c}</span>`).join('')}
+              </div>
+            </div>
+            <div style="flex: 1; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+              <span class="label">Size Grid (${style.size_type})</span>
+              <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;">
+                ${(style.available_sizes || []).map(s => `<span style="background:#4f46e5; color:#fff; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:6px; text-transform: uppercase;">${s}</span>`).join('')}
+              </div>
+            </div>
           </div>
+
+          <div class="section-title">Global Construction Summary</div>
+          <div class="summary-box">
+            ${style.style_text || "Standard technical construction procedures apply. No specific summary provided."}
+          </div>
+
           ${techPackHtml}
+
+          <div style="margin-top: 60px; text-align: center; border-top: 1px solid #eee; padding-top: 30px;">
+            <div style="font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">
+              Internal Document Control: Tintura SST Automated Engineering System
+            </div>
+            <div style="font-size: 8px; color: #cbd5e1; margin-top: 5px;">
+              Blueprint ID: ${style.id} | Page 1 of Content
+            </div>
+          </div>
+
           <script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script>
         </body>
       </html>`);
@@ -508,7 +590,7 @@ export const StyleDatabase: React.FC = () => {
               <div className="flex items-center gap-3">
                 {selectedStyleIds.length > 0 && <button onClick={() => setIsBulkUpdateModalOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-full font-black text-sm transition-all active:scale-95 shadow-lg flex items-center gap-2"><Edit3 size={18}/> Edit technical fields</button>}
                 <button onClick={() => bulkFileRef.current?.click()} className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-full font-black text-sm transition-all active:scale-95 shadow-lg flex items-center gap-2"><FileUp size={18}/> Create Bulk (CSV)</button>
-                <input type="file" ref={bulkFileRef} accept=".csv" className="hidden" onChange={handleCSVImport} />
+                <input type="file" min-h-[600px] ref={bulkFileRef} accept=".csv" className="hidden" onChange={handleCSVImport} />
               </div>
               <button onClick={() => { setSelectedStyleIds([]); setIsBulkMode(false); }} className="text-slate-400 hover:text-white transition-colors ml-2"><X/></button>
            </div>
