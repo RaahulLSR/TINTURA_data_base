@@ -1,9 +1,8 @@
-
-import React, { useMemo } from 'react';
-import { X, RefreshCcw, FilePlus, CheckSquare, Square, Info, Save, Loader2, Plus, Split, Scan, ImageIcon, Trash2, LayoutGrid, Calculator } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { X, RefreshCcw, FilePlus, CheckSquare, Square, Info, Save, Loader2, Plus, Split, Scan, ImageIcon, Trash2, LayoutGrid, Calculator, Ruler } from 'lucide-react';
 import { Style, StyleTemplate, Attachment, TechPackItem, Order, SizeBreakdown } from '../../types';
 import { ConsumptionInput } from './ConsumptionInput';
-import { uploadOrderAttachment } from '../../services/db';
+import { uploadOrderAttachment, upsertStyle } from '../../services/db';
 
 interface BulkUpdateModalProps {
   styles: Style[];
@@ -40,6 +39,19 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
   unionSizes,
   orders
 }) => {
+  const [localUnionSizes, setLocalUnionSizes] = useState<string[]>([]);
+  const [newSizeInput, setNewSizeInput] = useState('');
+
+  useEffect(() => {
+    setLocalUnionSizes(unionSizes);
+  }, [unionSizes]);
+
+  const handleAddNewSize = () => {
+    if (!newSizeInput.trim()) return;
+    if (localUnionSizes.includes(newSizeInput.trim())) return;
+    setLocalUnionSizes(prev => [...prev, newSizeInput.trim()].sort());
+    setNewSizeInput('');
+  };
 
   const handleFieldChange = (key: string, updates: Partial<TechPackItem>) => {
     setBulkFieldValues((prev: any) => ({
@@ -85,12 +97,116 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
     }
   };
 
+  // Override onExecute to handle available_sizes synchronization
+  const handleEnhancedExecute = async () => {
+    if (selectedStyleIds.length === 0) return;
+    setIsUploading(true);
+    try {
+      const selectedStyles = styles.filter(s => selectedStyleIds.includes(s.id));
+      const enabledUpdates = (Object.entries(bulkFieldValues) as [string, typeof bulkFieldValues[string]][]).filter(([_, val]) => val.isEnabled);
+      
+      if (enabledUpdates.length === 0) {
+        alert("Please select at least one field to update.");
+        setIsUploading(false);
+        return;
+      }
+
+      for (const style of selectedStyles) {
+        const updatedStyle = JSON.parse(JSON.stringify(style));
+        const { strategy } = bulkUpdateMeta;
+
+        for (const [key, fieldData] of enabledUpdates) {
+          const [category, field] = key.split('|');
+          if (!updatedStyle.tech_pack[category]) updatedStyle.tech_pack[category] = {};
+          
+          const mergeText = (current: string, next: string) => strategy === 'overwrite' ? next : (current ? current + '\n' + next : next);
+          const mergeAttachments = (current: Attachment[], next: Attachment[]) => strategy === 'overwrite' ? next : [...(current || []), ...next];
+
+          const bulkItem = { ...fieldData };
+          delete (bulkItem as any).isEnabled;
+
+          const currentItem = updatedStyle.tech_pack[category][field] || { text: '', attachments: [] };
+
+          if (!bulkItem.variants) {
+            currentItem.text = mergeText(currentItem.text, bulkItem.text);
+            currentItem.attachments = mergeAttachments(currentItem.attachments, bulkItem.attachments);
+            if (bulkItem.consumption_type) currentItem.consumption_type = bulkItem.consumption_type;
+            if (bulkItem.consumption_val !== undefined) currentItem.consumption_val = bulkItem.consumption_val;
+            if (strategy === 'overwrite') delete (currentItem as any).variants;
+          } else {
+            if (strategy === 'overwrite') {
+               currentItem.variants = [];
+               delete (currentItem as any).text;
+               delete (currentItem as any).attachments;
+            } else if (!currentItem.variants) {
+               currentItem.variants = [];
+            }
+
+            bulkItem.variants.forEach(bulkVar => {
+              const validColors = bulkVar.colors.filter(c => updatedStyle.available_colors?.includes(c));
+              if (validColors.length === 0) return;
+
+              let targetVar = currentItem.variants!.find(v => JSON.stringify(v.colors.sort()) === JSON.stringify(validColors.sort()));
+              if (!targetVar) {
+                targetVar = { colors: validColors, text: '', attachments: [] };
+                currentItem.variants!.push(targetVar);
+              }
+
+              if (!bulkVar.sizeVariants) {
+                targetVar.text = mergeText(targetVar.text, bulkVar.text);
+                targetVar.attachments = mergeAttachments(targetVar.attachments, bulkVar.attachments);
+                if (bulkVar.consumption_type) targetVar.consumption_type = bulkVar.consumption_type;
+                if (bulkVar.consumption_val !== undefined) targetVar.consumption_val = bulkVar.consumption_val;
+                if (strategy === 'overwrite') delete (targetVar as any).sizeVariants;
+              } else {
+                if (strategy === 'overwrite') {
+                  targetVar.sizeVariants = [];
+                  delete (targetVar as any).text;
+                  delete (targetVar as any).attachments;
+                } else if (!targetVar.sizeVariants) {
+                  targetVar.sizeVariants = [];
+                }
+
+                bulkVar.sizeVariants.forEach(bulkSizeVar => {
+                  // NEW: If we select a size in bulk edit, ensure it's added to the style's available pool if missing
+                  const sizesToInject = bulkSizeVar.sizes.filter(s => !updatedStyle.available_sizes?.includes(s));
+                  if (sizesToInject.length > 0) {
+                    updatedStyle.available_sizes = Array.from(new Set([...(updatedStyle.available_sizes || []), ...sizesToInject])).sort();
+                  }
+
+                  let targetSizeVar = targetVar!.sizeVariants!.find(sv => JSON.stringify(sv.sizes.sort()) === JSON.stringify(bulkSizeVar.sizes.sort()));
+                  if (!targetSizeVar) {
+                    targetSizeVar = { sizes: bulkSizeVar.sizes, text: '', attachments: [] };
+                    targetVar!.sizeVariants!.push(targetSizeVar);
+                  }
+
+                  targetSizeVar.text = mergeText(targetSizeVar.text, bulkSizeVar.text);
+                  targetSizeVar.attachments = mergeAttachments(targetSizeVar.attachments, bulkSizeVar.attachments);
+                  if (bulkSizeVar.consumption_type) targetSizeVar.consumption_type = bulkSizeVar.consumption_type;
+                  if (bulkSizeVar.consumption_val !== undefined) targetSizeVar.consumption_val = bulkSizeVar.consumption_val;
+                });
+              }
+            });
+          }
+          updatedStyle.tech_pack[category][field] = currentItem;
+        }
+        await upsertStyle(updatedStyle);
+      }
+      alert("Bulk update completed successfully.");
+      onClose();
+      onExecute(); // Parent refresh
+    } catch (err) {
+      alert("Error during bulk update: " + err);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   // --- Aggregate Order Data ---
   const productionAggregate = useMemo(() => {
     const selectedStyles = styles.filter(s => selectedStyleIds.includes(s.id));
     const selectedStyleNums = selectedStyles.map(s => s.style_number.toLowerCase());
     
-    // Filter relevant orders (matching any of selected styles)
     const relevantOrders = orders.filter(o => {
       const baseStyleNum = o.style_number.split(' - ')[0].trim().toLowerCase();
       return selectedStyleNums.includes(baseStyleNum);
@@ -99,7 +215,7 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
     const matrix: Record<string, Record<string, number>> = {};
     unionColors.forEach(c => {
       matrix[c] = {};
-      unionSizes.forEach(s => {
+      localUnionSizes.forEach(s => {
         matrix[c][s] = 0;
       });
     });
@@ -122,12 +238,11 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
     });
 
     return matrix;
-  }, [selectedStyleIds, styles, orders, unionColors, unionSizes]);
+  }, [selectedStyleIds, styles, orders, unionColors, localUnionSizes]);
 
   const totalProductionCount = useMemo(() => {
     let total = 0;
     Object.values(productionAggregate).forEach(row => {
-      // Fix for Type Error on Operator '+': Explicitly casting val as number
       Object.values(row).forEach(val => total += (val as number));
     });
     return total;
@@ -151,7 +266,34 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
         
         <div className="p-8 flex-1 overflow-y-auto space-y-8 bg-slate-50/50">
            
-           {/* NEW: PRODUCTION VOLUME AGGREGATE MATRIX */}
+           <div className="bg-white rounded-3xl border border-orange-200 p-6 shadow-sm flex flex-col md:flex-row items-center gap-6">
+              <div className="flex items-center gap-3 shrink-0">
+                 <div className="p-3 bg-orange-100 text-orange-600 rounded-xl">
+                    <Ruler size={24}/>
+                 </div>
+                 <div>
+                    <h4 className="font-black text-orange-900 text-sm uppercase">Inject New Sizes</h4>
+                    <p className="text-orange-400 text-[10px] font-bold uppercase tracking-widest">Add sizes (like 55, 50) that don't exist yet</p>
+                 </div>
+              </div>
+              <div className="flex-1 flex gap-2 w-full">
+                 <input 
+                   type="text" 
+                   placeholder="e.g. 55"
+                   className="flex-1 border-2 border-slate-100 rounded-xl px-5 py-3 font-bold focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                   value={newSizeInput}
+                   onChange={e => setNewSizeInput(e.target.value)}
+                   onKeyDown={e => e.key === 'Enter' && handleAddNewSize()}
+                 />
+                 <button 
+                   onClick={handleAddNewSize}
+                   className="bg-orange-600 text-white px-6 py-3 rounded-xl font-black uppercase text-xs hover:bg-orange-700 transition-all flex items-center gap-2"
+                 >
+                   <Plus size={16}/> Add Size to Pool
+                 </button>
+              </div>
+           </div>
+
            {totalProductionCount > 0 && (
              <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-fade-in">
                 <div className="p-5 border-b bg-slate-900 text-white flex justify-between items-center">
@@ -169,20 +311,19 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
                       <thead className="bg-slate-50 text-slate-500 font-black uppercase text-[9px] tracking-widest border-b">
                          <tr>
                             <th className="p-4 text-left border-r sticky left-0 bg-slate-50">Color Variant</th>
-                            {unionSizes.map(sz => <th key={sz} className="p-4 border-r">{sz}</th>)}
+                            {localUnionSizes.map(sz => <th key={sz} className="p-4 border-r">{sz}</th>)}
                             <th className="p-4 bg-slate-100 font-black">Sum</th>
                          </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                          {unionColors.map(color => {
                            const row = productionAggregate[color];
-                           // Fix for Type Error on Operator '+': Explicitly casting Object.values to number array
                            const rowTotal = (Object.values(row) as number[]).reduce((a,b) => a+b, 0);
-                           if (rowTotal === 0) return null; // Skip empty rows for cleaner view
+                           if (rowTotal === 0) return null;
                            return (
                              <tr key={color} className="hover:bg-indigo-50/30 transition-colors">
                                 <td className="p-4 text-left font-black text-slate-800 border-r sticky left-0 bg-white group-hover:bg-indigo-50/30">{color}</td>
-                                {unionSizes.map(sz => (
+                                {localUnionSizes.map(sz => (
                                   <td key={sz} className={`p-4 border-r tabular-nums font-bold ${row[sz] > 0 ? 'text-indigo-600 bg-indigo-50/20' : 'text-slate-200'}`}>
                                     {row[sz] || '-'}
                                   </td>
@@ -381,14 +522,14 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
                                               <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                                                 <div className="flex-1">
                                                   <div className="flex items-center gap-3 mb-2">
-                                                    <label className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">Apply to Sizes (Union Selection)</label>
+                                                    <label className="block text-[9px] font-black text-blue-400 uppercase tracking-widest">Apply to Sizes (Extended Pool)</label>
                                                     <div className="flex gap-1">
-                                                      <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].sizes = [...unionSizes]; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[7px] font-black uppercase text-blue-600 bg-white px-1.5 py-0.5 rounded border border-blue-100 hover:bg-blue-50 transition-colors">All</button>
+                                                      <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].sizes = [...localUnionSizes]; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[7px] font-black uppercase text-blue-600 bg-white px-1.5 py-0.5 rounded border border-blue-100 hover:bg-blue-50 transition-colors">All</button>
                                                       <button type="button" onClick={() => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].sizes = []; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className="text-[7px] font-black uppercase text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">None</button>
                                                     </div>
                                                   </div>
                                                   <div className="flex flex-wrap gap-1">
-                                                    {unionSizes.map(sz => {
+                                                    {localUnionSizes.map(sz => {
                                                       const isSzSel = sv.sizes.includes(sz);
                                                       return (
                                                         <button key={sz} type="button" onClick={() => { const updated = { ...fieldData }; const sVar = updated.variants![vIdx].sizeVariants![svIdx]; if (isSzSel) sVar.sizes = sVar.sizes.filter(s => s !== sz); else sVar.sizes.push(sz); setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }} className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${isSzSel ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-blue-300 border border-blue-100 hover:bg-blue-50'}`}>{sz}</button>
@@ -406,7 +547,7 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
 
                                               <textarea 
                                                 className="w-full border-2 border-white rounded-2xl p-4 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none bg-white min-h-[60px]"
-                                                placeholder="Instructions for selected size union..."
+                                                placeholder="Instructions for selected size pool..."
                                                 value={sv.text}
                                                 onChange={e => { const updated = { ...fieldData }; updated.variants![vIdx].sizeVariants![svIdx].text = e.target.value; setBulkFieldValues((prev: any) => ({ ...prev, [fieldKey]: updated })); }}
                                               />
@@ -453,7 +594,7 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
         <div className="p-8 border-t bg-white flex justify-between items-center shadow-2xl shrink-0">
           <button type="button" onClick={onClose} className="px-10 py-4 font-black text-slate-400 hover:text-slate-600 uppercase text-xs">Cancel</button>
           <button 
-            onClick={onExecute} 
+            onClick={handleEnhancedExecute} 
             disabled={isUploading}
             className="px-12 py-4 bg-orange-600 text-white rounded-2xl font-black shadow-2xl shadow-orange-200 flex items-center gap-3 active:scale-95 disabled:opacity-50 uppercase text-xs"
           >
