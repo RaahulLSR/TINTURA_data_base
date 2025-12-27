@@ -398,7 +398,12 @@ export const SubunitDashboard: React.FC = () => {
                   `;
               }
 
-              techPackHtml = template.config.filter(c => c.name !== "General Info" && !c.name.toLowerCase().includes('pre production')).map(cat => {
+              techPackHtml = template.config.filter(c => 
+                c.name !== "General Info" && 
+                !c.name.toLowerCase().includes('pre production') && 
+                !c.name.toLowerCase().includes('packing') &&
+                !c.name.toLowerCase().includes('requirements during production')
+              ).map(cat => {
                   return `
                     <div style="margin-top:25px; page-break-inside:avoid;">
                       <h3 style="background:#f1f5f9; color:#334155; padding:6px 12px; font-size:11px; text-transform:uppercase; letter-spacing:1px; border-radius:4px; border-left:4px solid #334155;">${cat.name} Reference</h3>

@@ -210,7 +210,7 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
           .section { margin-bottom: 20px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; page-break-inside: avoid; }
           .section-header { background: #334155; color: #fff; padding: 8px 12px; font-weight: bold; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
           table { width: 100%; border-collapse: collapse; }
-          th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; vertical-align: top; }
+          th, td { border: 1px solid #cbd5e1; padding: 6px; text-align: left; vertical-align: top; }
           th { background: #f1f5f9; text-transform: uppercase; font-size: 9px; color: #64748b; }
           .qty-val { font-weight: 900; color: #4f46e5; font-size: 13px; }
           .img-grid { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
@@ -316,7 +316,12 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
                     </div>`;
             }
 
-            techPackHtml = template.config.filter(c => c.name !== "General Info" && !c.name.toLowerCase().includes('pre production')).map(cat => {
+            techPackHtml = template.config.filter(c => 
+              c.name !== "General Info" && 
+              !c.name.toLowerCase().includes('pre production') && 
+              !c.name.toLowerCase().includes('packing') &&
+              !c.name.toLowerCase().includes('requirements during production')
+            ).map(cat => {
                 return `<div style="margin-top:20px; page-break-inside:avoid;"><h3 style="background:#f1f5f9; color:#334155; padding:6px 12px; font-size:11px; text-transform:uppercase; border-radius:4px; border-left:4px solid #334155;">${cat.name}</h3><div style="padding:5px 0;">${cat.fields.map(f => renderField(f, cat.name)).join('')}</div></div>`;
             }).join('');
         }
