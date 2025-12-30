@@ -72,6 +72,17 @@ export const SubunitDashboard: React.FC = () => {
   };
 
   const handleBulkStatusUpdate = async () => {
+    const hasInProgress = selectedOrders.some(id => {
+      const o = orders.find(ord => ord.id === id);
+      return o?.status === OrderStatus.IN_PROGRESS;
+    });
+
+    if (hasInProgress) {
+      if (!confirm("Warning: Some selected orders are being sent to QC Approval. Once sent, this action cannot be withdrawn. Proceed with bulk update?")) {
+        return;
+      }
+    }
+
     setLoading(true);
     await Promise.all(selectedOrders.map(async (id) => {
       const order = orders.find(o => o.id === id);
@@ -86,6 +97,13 @@ export const SubunitDashboard: React.FC = () => {
   };
 
   const handleSingleStatusUpdate = async (id: string, currentStatus: OrderStatus) => {
+    // Confirmation for IN_PROGRESS to QC
+    if (currentStatus === OrderStatus.IN_PROGRESS) {
+      if (!confirm("Warning: This order will be sent to QC Approval. Once sent to the QC Department, this action cannot be withdrawn from the sub-unit panel. Proceed?")) {
+        return;
+      }
+    }
+
     if (currentStatus === OrderStatus.QC_APPROVED) {
         const order = orders.find(o => o.id === id);
         if (order) {
