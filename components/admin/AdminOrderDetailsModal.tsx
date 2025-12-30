@@ -1,22 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, Pencil, Trash2, Printer, Save, Loader2, Clock, Paperclip, Box, Image as ImageIcon, FileText, Download, ArrowLeftRight, Upload, BookOpen, Calculator, ExternalLink, RefreshCcw } from 'lucide-react';
-import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber, Style, StyleTemplate, ConsumptionType } from '../../types';
-import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleByNumber, fetchStyleTemplate, fetchStyles } from '../../services/db';
-
-interface RequirementDetail {
-  label: string;
-  count: number;
-  calc: number;
-  text: string;
-  attachments: Attachment[];
-}
-
-interface DetailedRequirement {
-  name: string;
-  total: number;
-  breakdown: RequirementDetail[];
-}
+import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber, Style, StyleTemplate, ConsumptionType, DetailedRequirement } from '../../types';
+import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleByNumber, fetchStyleTemplate, fetchStyles, calculateOrderForecast } from '../../services/db';
 
 interface AdminOrderDetailsModalProps {
   order: Order;
@@ -81,85 +67,19 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     }
   };
 
-  const calculateRequirementValue = (qty: number, type: ConsumptionType, val: number) => {
-    if (!val) return 0;
-    return type === 'items_per_pc' ? qty * val : qty / val;
-  };
-
   const getDetailedRequirements = (): DetailedRequirement[] => {
-    // During editing, we use the temporary linkedStyle if it changed
-    const activeStyle = linkedStyle;
-    const activeBreakdown = (editFormData.size_breakdown || order.size_breakdown) as SizeBreakdown[];
-
-    if (!activeStyle || !activeBreakdown) return [];
-    
-    const detailedReqs: DetailedRequirement[] = [];
-    const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
-    const sizeLabels = getHeaderLabels();
-
-    for (const catName in activeStyle.tech_pack) {
-      for (const fieldName in activeStyle.tech_pack[catName]) {
-        const item = activeStyle.tech_pack[catName][fieldName];
-        const req: DetailedRequirement = { name: fieldName, total: 0, breakdown: [] };
-
-        if (item.variants) {
-          for (const variant of item.variants) {
-            const matchingRows = activeBreakdown.filter(r => variant.colors.includes(r.color));
-            if (matchingRows.length === 0) continue;
-
-            if (variant.sizeVariants) {
-              for (const sv of variant.sizeVariants) {
-                const targetKeys = sizeKeys.filter((_, i) => sv.sizes.includes(sizeLabels[i]));
-                const qty = matchingRows.reduce((sum, row) => sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0), 0);
-                
-                if (qty > 0) {
-                  const rType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
-                  const rVal = sv.consumption_val !== undefined ? sv.consumption_val : (variant.consumption_val !== undefined ? variant.consumption_val : (item.consumption_val || 0));
-                  const calc = calculateRequirementValue(qty, rType, rVal);
-                  
-                  req.breakdown.push({
-                    label: `${variant.colors.join('/')} - ${sv.sizes.join('/')}`,
-                    count: qty,
-                    calc: Math.ceil(calc * 100) / 100,
-                    text: sv.text || variant.text || item.text,
-                    attachments: sv.attachments.length > 0 ? sv.attachments : (variant.attachments.length > 0 ? variant.attachments : item.attachments)
-                  });
-                  req.total += calc;
-                }
-              }
-            } else if (variant.consumption_type) {
-              const qty = matchingRows.reduce((sum, row) => sum + getRowTotal(row), 0);
-              const calc = calculateRequirementValue(qty, variant.consumption_type, variant.consumption_val || 0);
-              req.breakdown.push({
-                label: `Color: ${variant.colors.join('/')}`,
-                count: qty,
-                calc: Math.ceil(calc * 100) / 100,
-                text: variant.text || item.text,
-                attachments: variant.attachments.length > 0 ? variant.attachments : item.attachments
-              });
-              req.total += calc;
-            }
-          }
-        } else if (item.consumption_type) {
-          const currentTotal = isEditing ? getTotalQuantity(activeBreakdown) : order.quantity;
-          const calc = calculateRequirementValue(currentTotal, item.consumption_type, item.consumption_val || 0);
-          req.breakdown.push({
-            label: "Global (All Colors/Sizes)",
-            count: currentTotal,
-            calc: Math.ceil(calc * 100) / 100,
-            text: item.text,
-            attachments: item.attachments
-          });
-          req.total = calc;
-        }
-
-        if (req.total > 0) {
-          req.total = Math.ceil(req.total * 100) / 100;
-          detailedReqs.push(req);
-        }
-      }
+    // If we are currently editing, recalculate dynamically based on form data
+    if (isEditing && linkedStyle) {
+      return calculateOrderForecast({ ...order, ...editFormData } as Order, linkedStyle);
     }
-    return detailedReqs;
+    // Otherwise, prefer the stored forecast from the database, fall back to calculation
+    if (order.material_forecast && order.material_forecast.length > 0) {
+      return order.material_forecast;
+    }
+    if (linkedStyle) {
+      return calculateOrderForecast(order, linkedStyle);
+    }
+    return [];
   };
 
   const handleSave = async () => {
@@ -172,12 +92,21 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
       }
       const finalAttachments = [...(editFormData.attachments || []), ...newAttachments];
       const finalQty = getTotalQuantity(editFormData.size_breakdown as SizeBreakdown[]);
+      
+      // Calculate final forecast before saving to ensure DB is in sync
+      let finalForecast = order.material_forecast;
+      if (linkedStyle) {
+        finalForecast = calculateOrderForecast({ ...order, ...editFormData, quantity: finalQty } as Order, linkedStyle);
+      }
+
       const result = await updateOrderDetails(order.id, { 
         ...editFormData, 
         quantity: finalQty, 
         attachments: finalAttachments, 
-        size_format: useNumericSizes ? 'numeric' : 'standard' 
+        size_format: useNumericSizes ? 'numeric' : 'standard',
+        material_forecast: finalForecast
       });
+
       if (result.success) {
         await triggerOrderEmail(order.id, true);
         onRefresh();
@@ -486,60 +415,6 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
             </div>
           </div>
 
-          {/* GRANULAR REQUIREMENTS FORECAST SECTION */}
-          {detailedReqs.length > 0 && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center gap-3">
-                <Calculator size={20} className="text-indigo-600"/>
-                <h4 className="font-black text-slate-700 uppercase tracking-tight text-lg">Granular Material Forecast</h4>
-              </div>
-              <div className="grid grid-cols-1 gap-6">
-                {detailedReqs.map((req, i) => (
-                  <div key={i} className="bg-white rounded-3xl border border-indigo-100 shadow-sm overflow-hidden group">
-                    <div className="p-5 bg-indigo-600 text-white flex items-center justify-between">
-                      <span className="font-black uppercase tracking-widest text-sm">{req.name}</span>
-                      <div className="flex items-center gap-4">
-                         <span className="text-[10px] font-bold opacity-60 uppercase">Calculated Job Total</span>
-                         <span className="text-xl font-black">{req.total}</span>
-                      </div>
-                    </div>
-                    <div className="p-6">
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                        {req.breakdown.map((b, idx) => (
-                          <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 hover:border-indigo-300 transition-colors">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest block mb-1">{b.label}</span>
-                                <span className="text-xs font-bold text-slate-500">Volume: {b.count} Pcs</span>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-xl font-black text-indigo-700">{b.calc}</span>
-                                <span className="text-[8px] block font-black text-slate-400 uppercase">Estimated</span>
-                              </div>
-                            </div>
-                            
-                            <div className="p-3 bg-white rounded-xl border border-slate-100">
-                               <p className="text-xs font-bold text-slate-700 leading-relaxed italic">"{b.text || 'No specific notes.'}"</p>
-                               {b.attachments.length > 0 && (
-                                 <div className="mt-3 flex flex-wrap gap-2">
-                                    {b.attachments.map((att, attIdx) => (
-                                      <a key={attIdx} href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-black border border-indigo-100 hover:bg-indigo-100 transition-all">
-                                        {att.type === 'image' ? <ImageIcon size={10}/> : <FileText size={10}/>} {att.name}
-                                      </a>
-                                    ))}
-                                 </div>
-                               )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          
           <div>
             <div className="flex justify-between items-center mb-4">
               <h4 className="font-black text-slate-700 uppercase tracking-tight text-lg">Product breakdown matrix</h4>
@@ -656,6 +531,60 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
               ))}
             </div>
           </div>
+
+          {/* GRANULAR REQUIREMENTS FORECAST SECTION - MOVED TO END */}
+          {detailedReqs.length > 0 && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex items-center gap-3">
+                <Calculator size={20} className="text-indigo-600"/>
+                <h4 className="font-black text-slate-700 uppercase tracking-tight text-lg">Granular Material Forecast</h4>
+              </div>
+              <div className="grid grid-cols-1 gap-6">
+                {detailedReqs.map((req, i) => (
+                  <div key={i} className="bg-white rounded-3xl border border-indigo-100 shadow-sm overflow-hidden group">
+                    <div className="p-5 bg-indigo-600 text-white flex items-center justify-between">
+                      <span className="font-black uppercase tracking-widest text-sm">{req.name}</span>
+                      <div className="flex items-center gap-4">
+                         <span className="text-[10px] font-bold opacity-60 uppercase">Calculated Job Total</span>
+                         <span className="text-xl font-black">{req.total}</span>
+                      </div>
+                    </div>
+                    <div className="p-6">
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        {req.breakdown.map((b, idx) => (
+                          <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 hover:border-indigo-300 transition-colors">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest block mb-1">{b.label}</span>
+                                <span className="text-xs font-bold text-slate-500">Volume: {b.count} Pcs</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-xl font-black text-indigo-700">{b.calc}</span>
+                                <span className="text-[8px] block font-black text-slate-400 uppercase">Estimated</span>
+                              </div>
+                            </div>
+                            
+                            <div className="p-3 bg-white rounded-xl border border-slate-100">
+                               <p className="text-xs font-bold text-slate-700 leading-relaxed italic">"{b.text || 'No specific notes.'}"</p>
+                               {b.attachments.length > 0 && (
+                                 <div className="mt-3 flex flex-wrap gap-2">
+                                    {b.attachments.map((att, attIdx) => (
+                                      <a key={attIdx} href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-black border border-indigo-100 hover:bg-indigo-100 transition-all">
+                                        {att.type === 'image' ? <ImageIcon size={10}/> : <FileText size={10}/>} {att.name}
+                                      </a>
+                                    ))}
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         
         <div className="p-6 border-t bg-slate-50 flex justify-between items-center">

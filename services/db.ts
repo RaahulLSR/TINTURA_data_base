@@ -3,11 +3,86 @@ import { supabase } from './supabase';
 // Export supabase for centralized access in components like AdminDashboard
 export { supabase };
 // Added formatOrderNumber to the imports from types
-import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog, Attachment, Style, StyleTemplate, BulkEditHistory, formatOrderNumber } from '../types';
+import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog, Attachment, Style, StyleTemplate, BulkEditHistory, formatOrderNumber, DetailedRequirement, ConsumptionType } from '../types';
 
 const API_BASE = (typeof window !== 'undefined' && (window.location.protocol === 'file:' || window.location.hostname === 'localhost'))
   ? 'https://tintura-mail.vercel.app'
   : '';
+
+// --- Forecast Calculation Core Engine ---
+export const calculateOrderForecast = (order: Order, style: Style): DetailedRequirement[] => {
+  if (!style || !order.size_breakdown) return [];
+  
+  const detailedReqs: DetailedRequirement[] = [];
+  const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
+  const sizeLabels = order.size_format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+
+  const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
+  const calculateVal = (qty: number, type: ConsumptionType, val: number) => !val ? 0 : (type === 'items_per_pc' ? qty * val : qty / val);
+
+  for (const catName in style.tech_pack) {
+    for (const fieldName in style.tech_pack[catName]) {
+      const item = style.tech_pack[catName][fieldName];
+      const req: DetailedRequirement = { name: fieldName, total: 0, breakdown: [] };
+
+      if (item.variants) {
+        for (const variant of item.variants) {
+          const matchingRows = order.size_breakdown.filter(r => variant.colors.includes(r.color));
+          if (matchingRows.length === 0) continue;
+
+          if (variant.sizeVariants) {
+            for (const sv of variant.sizeVariants) {
+              const targetKeys = sizeKeys.filter((_, i) => sv.sizes.includes(sizeLabels[i]));
+              const qty = matchingRows.reduce((sum, row) => sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0), 0);
+              
+              if (qty > 0) {
+                const rType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
+                const rVal = sv.consumption_val !== undefined ? sv.consumption_val : (variant.consumption_val !== undefined ? variant.consumption_val : (item.consumption_val || 0));
+                const calc = calculateVal(qty, rType, rVal);
+                
+                req.breakdown.push({
+                  label: `${variant.colors.join('/')} - ${sv.sizes.join('/')}`,
+                  count: qty,
+                  calc: Math.ceil(calc * 100) / 100,
+                  text: sv.text || variant.text || item.text,
+                  attachments: sv.attachments.length > 0 ? sv.attachments : (variant.attachments.length > 0 ? variant.attachments : item.attachments)
+                });
+                req.total += calc;
+              }
+            }
+          } else if (variant.consumption_type) {
+            const qty = matchingRows.reduce((sum, row) => sum + getRowTotal(row), 0);
+            const calc = calculateVal(qty, variant.consumption_type, variant.consumption_val || 0);
+            req.breakdown.push({
+              label: `Color: ${variant.colors.join('/')}`,
+              count: qty,
+              calc: Math.ceil(calc * 100) / 100,
+              text: variant.text || item.text,
+              attachments: variant.attachments.length > 0 ? variant.attachments : item.attachments
+            });
+            req.total += calc;
+          }
+        }
+      } else if (item.consumption_type) {
+        const calc = calculateVal(order.quantity, item.consumption_type, item.consumption_val || 0);
+        req.breakdown.push({
+          label: "Global Requirement",
+          count: order.quantity,
+          calc: Math.ceil(calc * 100) / 100,
+          text: item.text,
+          attachments: item.attachments
+        });
+        req.total = calc;
+      }
+
+      if (req.total > 0) {
+        req.total = Math.ceil(req.total * 100) / 100;
+        detailedReqs.push(req);
+      }
+    }
+  }
+  return detailedReqs;
+};
 
 // --- Generic History Helpers ---
 const recordHistory = async (table: string, description: string, items: any[]): Promise<void> => {
@@ -97,14 +172,51 @@ export const fetchOrders = async (): Promise<Order[]> => {
   return data as Order[];
 };
 
+export const syncAllOrdersWithStyles = async (): Promise<{ updated: number; total: number }> => {
+  const orders = await fetchOrders();
+  const styles = await fetchStyles();
+  let updatedCount = 0;
+
+  for (const order of orders) {
+    const stylePrefix = order.style_number.split(' - ')[0].trim();
+    const match = styles.find(s => s.style_number.trim().toLowerCase() === stylePrefix.toLowerCase());
+
+    if (match) {
+      const canonicalStyleName = `${match.style_number} - ${match.style_text}`;
+      const canonicalSizeFormat = match.size_type === 'number' ? 'numeric' : 'standard';
+      const recalculatedForecast = calculateOrderForecast(order, match);
+
+      // Check if data actually needs an update to prevent redundant writes
+      const needsUpdate = 
+        order.style_number !== canonicalStyleName || 
+        order.size_format !== canonicalSizeFormat ||
+        JSON.stringify(order.material_forecast) !== JSON.stringify(recalculatedForecast);
+
+      if (needsUpdate) {
+        const { error } = await supabase.from('orders').update({
+          style_number: canonicalStyleName,
+          size_format: canonicalSizeFormat,
+          material_forecast: recalculatedForecast
+        }).eq('id', order.id);
+
+        if (!error) {
+          updatedCount++;
+          await addOrderLog(order.id, 'MANUAL_UPDATE', `Master Sync: Material forecasts and style blueprint recalculated from Database.`);
+        }
+      }
+    }
+  }
+
+  return { updated: updatedCount, total: orders.length };
+};
+
 export const updateOrderDetails = async (orderId: string, updates: Partial<Order>): Promise<{ success: boolean; error: string | null }> => {
     // Record history for single order update
     const { data: original } = await supabase.from('orders').select('*').eq('id', orderId).single();
-    // Fix: formatOrderNumber is now correctly imported from types
     if (original) await recordOrderEditHistory(`Individual Update: ${formatOrderNumber(original)}`, [original]);
 
     const payload: any = {};
-    const allowedKeys = ['style_number', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count'];
+    const allowedKeys = ['style_number', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count', 'material_forecast'];
     allowedKeys.forEach(k => { if ((updates as any)[k] !== undefined) payload[k] = (updates as any)[k]; });
     const { error } = await supabase.from('orders').update(payload).eq('id', orderId);
     if (error) return { success: false, error: error.message };

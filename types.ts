@@ -62,6 +62,20 @@ export interface Attachment {
   type: 'image' | 'document';
 }
 
+export interface RequirementDetail {
+  label: string;
+  count: number;
+  calc: number;
+  text: string;
+  attachments: Attachment[];
+}
+
+export interface DetailedRequirement {
+  name: string;
+  total: number;
+  breakdown: RequirementDetail[];
+}
+
 export interface Order {
   id: string;
   order_no: string;
@@ -77,6 +91,7 @@ export interface Order {
   qc_attachment_url?: string; 
   size_breakdown?: SizeBreakdown[]; 
   completion_breakdown?: SizeBreakdown[]; 
+  material_forecast?: DetailedRequirement[];
   description: string;
   qc_notes?: string; 
   target_delivery_date: string; 
