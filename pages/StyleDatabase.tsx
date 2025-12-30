@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchStyles, upsertStyle, fetchStyleTemplate, deleteStyle, uploadOrderAttachment, fetchOrders } from '../services/db';
+import { fetchStyles, upsertStyle, fetchStyleTemplate, deleteStyle, uploadOrderAttachment, fetchOrders, recordBulkEditHistory } from '../services/db';
 import { Style, StyleTemplate, Attachment, TechPackItem, ConsumptionType, Order } from '../types';
 import { 
-  Plus, Search, Grid, Copy, Trash2, Settings, ArrowLeftRight, CheckSquare, Square, FileUp, Table, BookOpen, ChevronRight, Edit3, Printer, X, FileSpreadsheet
+  Plus, Search, Grid, Copy, Trash2, Settings, ArrowLeftRight, CheckSquare, Square, FileUp, Table, BookOpen, ChevronRight, Edit3, Printer, X, FileSpreadsheet, History
 } from 'lucide-react';
 
 // Imported modular components
@@ -13,6 +13,7 @@ import { BulkUpdateModal } from '../components/style-db/BulkUpdateModal';
 import { BulkImportModal } from '../components/style-db/BulkImportModal';
 import { EditorModal } from '../components/style-db/EditorModal';
 import { BulkAttributeUpdateModal } from '../components/style-db/BulkAttributeUpdateModal';
+import { HistoryModal } from '../components/style-db/HistoryModal';
 
 export const StyleDatabase: React.FC = () => {
   const [styles, setStyles] = useState<Style[]>([]);
@@ -28,6 +29,7 @@ export const StyleDatabase: React.FC = () => {
   const [garmentTypeOptions, setGarmentTypeOptions] = useState(['Pant', 'Trackpant', 'Shorts', 'T-shirt']);
   const [demographicOptions, setDemographicOptions] = useState(['Men', 'Boys']);
   const [isAuditViewOpen, setIsAuditViewOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<{ category?: string, field?: string } | null>(null);
   
   // Bulk Mode States
@@ -86,6 +88,15 @@ export const StyleDatabase: React.FC = () => {
     e.preventDefault();
     if (!isEditing) return;
     setIsUploading(true);
+
+    // RECORD HISTORY BEFORE SAVE IF EDITING
+    if (isEditing.id) {
+       const original = styles.find(s => s.id === isEditing.id);
+       if (original) {
+          await recordBulkEditHistory(`Individual Update: ${original.style_number}`, [original]);
+       }
+    }
+
     const payload: Partial<Style> = { ...isEditing };
     if (!payload.id || payload.id === "") delete payload.id;
     const { error } = await upsertStyle(payload);
@@ -229,11 +240,16 @@ export const StyleDatabase: React.FC = () => {
     try {
       const selectedStyles = styles.filter(s => selectedStyleIds.includes(s.id));
       const enabledUpdates = (Object.entries(bulkFieldValues) as [string, typeof bulkFieldValues[string]][]).filter(([_, val]) => val.isEnabled);
+      
       if (enabledUpdates.length === 0) {
         alert("Please select at least one field to update.");
         setIsUploading(false);
         return;
       }
+
+      // RECORD HISTORY BEFORE BULK UPDATE
+      const updatedFieldNames = enabledUpdates.map(([k]) => k.split('|')[1]).join(', ');
+      await recordBulkEditHistory(`Bulk Update: ${updatedFieldNames} (${bulkUpdateMeta.strategy})`, selectedStyles);
 
       for (const style of selectedStyles) {
         const updatedStyle = JSON.parse(JSON.stringify(style));
@@ -246,21 +262,18 @@ export const StyleDatabase: React.FC = () => {
           const mergeText = (current: string, next: string) => strategy === 'overwrite' ? next : (current ? current + '\n' + next : next);
           const mergeAttachments = (current: Attachment[], next: Attachment[]) => strategy === 'overwrite' ? next : [...(current || []), ...next];
 
-          // Use the TechPackItem structure directly from bulkFieldValues
           const bulkItem = { ...fieldData };
           delete (bulkItem as any).isEnabled;
 
           const currentItem = updatedStyle.tech_pack[category][field] || { text: '', attachments: [] };
 
           if (!bulkItem.variants) {
-            // Global Update
             currentItem.text = mergeText(currentItem.text, bulkItem.text);
             currentItem.attachments = mergeAttachments(currentItem.attachments, bulkItem.attachments);
             if (bulkItem.consumption_type) currentItem.consumption_type = bulkItem.consumption_type;
             if (bulkItem.consumption_val !== undefined) currentItem.consumption_val = bulkItem.consumption_val;
             if (strategy === 'overwrite') delete (currentItem as any).variants;
           } else {
-            // Variant-Based Update
             if (strategy === 'overwrite') {
                currentItem.variants = [];
                delete (currentItem as any).text;
@@ -270,9 +283,8 @@ export const StyleDatabase: React.FC = () => {
             }
 
             bulkItem.variants.forEach(bulkVar => {
-              // Filter colors to only those the style possesses
               const validColors = bulkVar.colors.filter(c => updatedStyle.available_colors?.includes(c));
-              if (validColors.length === 0) return; // Skip if no colors match union selection
+              if (validColors.length === 0) return;
 
               let targetVar = currentItem.variants!.find(v => JSON.stringify(v.colors.sort()) === JSON.stringify(validColors.sort()));
               if (!targetVar) {
@@ -529,6 +541,7 @@ export const StyleDatabase: React.FC = () => {
           </div>
           <div className="h-8 w-px bg-slate-200 mx-2"></div>
 
+          <button onClick={() => setIsHistoryOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all flex items-center gap-2 font-bold text-sm" title="Technical Audit Logs"><History size={20}/> History</button>
           <button onClick={() => setIsBulkAttributeUpdateOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-green-600 hover:border-green-500 rounded-xl transition-all flex items-center gap-2 font-bold text-sm" title="Sync Specific Values via CSV"><FileSpreadsheet size={20}/> Sync Values (CSV)</button>
           
           <button onClick={() => setIsAuditViewOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-500 rounded-xl transition-all flex items-center gap-2 font-bold text-sm" title="Data Completeness Matrix"><Table size={20}/> Matrix Audit</button>
@@ -618,6 +631,13 @@ export const StyleDatabase: React.FC = () => {
         <AuditMatrixModal 
           styles={styles} template={template} onClose={() => setIsAuditViewOpen(false)} 
           onCellClick={handleMatrixCellClick} checkCompleteness={checkCompleteness} 
+        />
+      )}
+
+      {isHistoryOpen && (
+        <HistoryModal 
+          onClose={() => setIsHistoryOpen(false)}
+          onUndoSuccess={loadData}
         />
       )}
 

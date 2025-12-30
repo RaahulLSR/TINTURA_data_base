@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { X, FileUp, CheckCircle2, AlertCircle, Loader2, Save, ChevronDown, Check } from 'lucide-react';
 import { Style, StyleTemplate, TechPackItem } from '../../types';
-import { upsertStyle } from '../../services/db';
+import { upsertStyle, recordBulkEditHistory } from '../../services/db';
 
 interface BulkAttributeUpdateModalProps {
   styles: Style[];
@@ -66,13 +66,24 @@ export const BulkAttributeUpdateModal: React.FC<BulkAttributeUpdateModalProps> =
       };
 
       const rows = lines.map(splitCSV);
-      let updatedCount = 0;
-      const notFoundStyles: string[] = [];
-
-      // Start processing from row 0 or 1 depending on header detection (assuming simple 2 columns)
-      // We check if the first row looks like a header (Style Number / StyleNo etc)
       const firstRowLabel = rows[0][0].toLowerCase();
       const startIndex = (firstRowLabel.includes('style') || firstRowLabel.includes('number')) ? 1 : 0;
+
+      // IDENTIFY ALL TARGET STYLES FOR SNAPSHOT
+      const stylesToSnapshot: Style[] = [];
+      for (let i = startIndex; i < rows.length; i++) {
+        const [styleNum] = rows[i];
+        if (!styleNum) continue;
+        const match = styles.find(s => s.style_number.trim().toLowerCase() === styleNum.trim().toLowerCase());
+        if (match) stylesToSnapshot.push(match);
+      }
+
+      // RECORD HISTORY BEFORE MODIFICATION
+      const fieldName = fieldOptions.find(o => o.id === selectedField)?.label || selectedField;
+      await recordBulkEditHistory(`CSV Attribute Sync: ${fieldName}`, stylesToSnapshot);
+
+      let updatedCount = 0;
+      const notFoundStyles: string[] = [];
 
       for (let i = startIndex; i < rows.length; i++) {
         const [styleNum, value] = rows[i];
@@ -116,7 +127,7 @@ export const BulkAttributeUpdateModal: React.FC<BulkAttributeUpdateModalProps> =
       onRefresh();
     };
     reader.readAsText(file);
-    e.target.value = ''; // Reset
+    e.target.value = ''; 
   };
 
   return (

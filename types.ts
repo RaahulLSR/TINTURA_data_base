@@ -138,6 +138,14 @@ export interface StyleTemplate {
   id: number;
   config: StyleCategory[];
 }
+
+export interface BulkEditHistory {
+  id: string;
+  created_at: string;
+  description: string;
+  affected_count: number;
+  snapshot: Record<string, Style>; // Map of styleId -> Style object (before state)
+}
 // --- End Style Database Types ---
 
 export interface MaterialRequest {

@@ -1,10 +1,45 @@
 
 import { supabase } from './supabase';
-import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog, Attachment, Style, StyleTemplate } from '../types';
+// Export supabase for centralized access in components like AdminDashboard
+export { supabase };
+// Added formatOrderNumber to the imports from types
+import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog, Attachment, Style, StyleTemplate, BulkEditHistory, formatOrderNumber } from '../types';
 
 const API_BASE = (typeof window !== 'undefined' && (window.location.protocol === 'file:' || window.location.hostname === 'localhost'))
   ? 'https://tintura-mail.vercel.app'
   : '';
+
+// --- Generic History Helpers ---
+const recordHistory = async (table: string, description: string, items: any[]): Promise<void> => {
+  if (items.length === 0) return;
+  const snapshot: Record<string, any> = {};
+  items.forEach(item => { snapshot[item.id] = item; });
+  const { error } = await supabase.from(table).insert([{
+    description,
+    affected_count: items.length,
+    snapshot
+  }]);
+  if (error) console.error(`History recording failed for ${table}:`, error.message);
+};
+
+const undoHistory = async (historyTable: string, targetTable: string, historyId: string): Promise<{ success: boolean; error?: string }> => {
+  const { data: history, error: fetchError } = await supabase.from(historyTable).select('*').eq('id', historyId).single();
+  if (fetchError || !history) return { success: false, error: 'History record not found' };
+
+  const snapshot = history.snapshot as Record<string, any>;
+  const objects = Object.values(snapshot);
+
+  try {
+    // Perform a batch upsert to ensure all records are restored atomically
+    const { error: upsertError } = await supabase.from(targetTable).upsert(objects);
+    if (upsertError) throw upsertError;
+
+    await supabase.from(historyTable).delete().eq('id', historyId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+};
 
 // --- Style Database Services ---
 export const fetchStyles = async (): Promise<Style[]> => {
@@ -15,12 +50,6 @@ export const fetchStyles = async (): Promise<Style[]> => {
 
 export const fetchStyleByNumber = async (styleNum: string): Promise<Style | null> => {
     const { data, error } = await supabase.from('styles').select('*').eq('style_number', styleNum).maybeSingle();
-    if (error || !data) return null;
-    return data as Style;
-};
-
-export const fetchStyleById = async (id: string): Promise<Style | null> => {
-    const { data, error } = await supabase.from('styles').select('*').eq('id', id).single();
     if (error || !data) return null;
     return data as Style;
 };
@@ -44,8 +73,84 @@ export const fetchStyleTemplate = async (): Promise<StyleTemplate | null> => {
 export const updateStyleTemplate = async (config: any[]): Promise<void> => {
   await supabase.from('style_templates').upsert([{ id: 1, config, updated_at: new Date().toISOString() }]);
 };
-// --- End Style Database Services ---
 
+// --- Style History ---
+export const recordBulkEditHistory = (desc: string, styles: Style[]) => recordHistory('bulk_edit_history', desc, styles);
+export const fetchBulkEditHistory = async () => {
+  const { data } = await supabase.from('bulk_edit_history').select('*').order('created_at', { ascending: false }).limit(50);
+  return (data || []) as BulkEditHistory[];
+};
+export const undoBulkEdit = (id: string) => undoHistory('bulk_edit_history', 'styles', id);
+
+// --- Order History ---
+export const recordOrderEditHistory = (desc: string, orders: Order[]) => recordHistory('order_edit_history', desc, orders);
+export const fetchOrderEditHistory = async () => {
+  const { data } = await supabase.from('order_edit_history').select('*').order('created_at', { ascending: false }).limit(50);
+  return (data || []) as BulkEditHistory[];
+};
+export const undoOrderEdit = (id: string) => undoHistory('order_edit_history', 'orders', id);
+
+// --- Order Services ---
+export const fetchOrders = async (): Promise<Order[]> => {
+  const { data, error } = await supabase.from('orders').select('*').or('deleted.eq.false,deleted.is.null').order('created_at', { ascending: false });
+  if (error || !data) return [];
+  return data as Order[];
+};
+
+export const updateOrderDetails = async (orderId: string, updates: Partial<Order>): Promise<{ success: boolean; error: string | null }> => {
+    // Record history for single order update
+    const { data: original } = await supabase.from('orders').select('*').eq('id', orderId).single();
+    // Fix: formatOrderNumber is now correctly imported from types
+    if (original) await recordOrderEditHistory(`Individual Update: ${formatOrderNumber(original)}`, [original]);
+
+    const payload: any = {};
+    const allowedKeys = ['style_number', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count'];
+    allowedKeys.forEach(k => { if ((updates as any)[k] !== undefined) payload[k] = (updates as any)[k]; });
+    const { error } = await supabase.from('orders').update(payload).eq('id', orderId);
+    if (error) return { success: false, error: error.message };
+    await addOrderLog(orderId, 'MANUAL_UPDATE', 'Order details revised by Admin.');
+    return { success: true, error: null };
+};
+
+export const createOrder = async (order: Partial<Order>): Promise<{ data: Order | null, error: string | null }> => {
+    const { data: seqValue, error: seqError } = await supabase.rpc('next_order_no');
+    if (seqError || !seqValue) return { data: null, error: 'Failed to generate order number' };
+    const orderNo = `ORD-${seqValue}`;
+    const payload: any = {
+        order_no: orderNo,
+        unit_id: order.unit_id,
+        style_number: order.style_number,
+        quantity: order.quantity,
+        size_breakdown: order.size_breakdown,
+        description: order.description,
+        target_delivery_date: order.target_delivery_date,
+        status: OrderStatus.ASSIGNED,
+        deleted: false
+    };
+    const optionalKeys: (keyof Order)[] = ['box_count', 'size_format', 'attachments'];
+    optionalKeys.forEach(key => { if (order[key] !== undefined) payload[key] = order[key]; });
+    const { data, error } = await supabase.from('orders').insert([payload]).select().single();
+    if (error) return { data: null, error: error.message };
+    if (data) await addOrderLog(data.id, 'CREATION', `Order #${orderNo} Launched.`);
+    return { data: data as Order, error: null };
+};
+
+export const deleteOrder = async (orderId: string): Promise<void> => {
+    await supabase.from('orders').update({ deleted: true }).eq('id', orderId);
+};
+
+export const updateOrderStatus = async (orderId: string, status: OrderStatus, notes?: string, completionData?: any, qcAttachmentUrl?: string): Promise<void> => {
+   const payload: any = { status, qc_notes: notes };
+   if (completionData) {
+       payload.completion_breakdown = completionData.completion_breakdown;
+       payload.actual_box_count = completionData.actual_box_count;
+   }
+   if (qcAttachmentUrl) payload.qc_attachment_url = qcAttachmentUrl;
+   await supabase.from('orders').update(payload).eq('id', orderId);
+   await addOrderLog(orderId, 'STATUS_CHANGE', `Status: ${status}${notes ? ` - ${notes}` : ''}`);
+};
+
+// --- Other Services ---
 export const triggerOrderEmail = async (orderId: string, isEdit: boolean = false): Promise<{ success: boolean; message: string }> => {
   try {
     const response = await fetch(`${API_BASE}/api/send-email`, {
@@ -96,60 +201,6 @@ export const fetchUnits = async (): Promise<Unit[]> => {
     const { data, error } = await supabase.from('units').select('*').order('id');
     if (error || !data) return [];
     return data as Unit[];
-};
-
-export const fetchOrders = async (): Promise<Order[]> => {
-  const { data, error } = await supabase.from('orders').select('*').or('deleted.eq.false,deleted.is.null').order('created_at', { ascending: false });
-  if (error || !data) return [];
-  return data as Order[];
-};
-
-export const createOrder = async (order: Partial<Order>): Promise<{ data: Order | null, error: string | null }> => {
-    const { data: seqValue, error: seqError } = await supabase.rpc('next_order_no');
-    if (seqError || !seqValue) return { data: null, error: 'Failed to generate order number' };
-    const orderNo = `ORD-${seqValue}`;
-    const payload: any = {
-        order_no: orderNo,
-        unit_id: order.unit_id,
-        style_number: order.style_number,
-        quantity: order.quantity,
-        size_breakdown: order.size_breakdown,
-        description: order.description,
-        target_delivery_date: order.target_delivery_date,
-        status: OrderStatus.ASSIGNED,
-        deleted: false
-    };
-    const optionalKeys: (keyof Order)[] = ['box_count', 'size_format', 'attachments'];
-    optionalKeys.forEach(key => { if (order[key] !== undefined) payload[key] = order[key]; });
-    const { data, error } = await supabase.from('orders').insert([payload]).select().single();
-    if (error) return { data: null, error: error.message };
-    if (data) await addOrderLog(data.id, 'CREATION', `Order #${orderNo} Launched.`);
-    return { data: data as Order, error: null };
-};
-
-export const deleteOrder = async (orderId: string): Promise<void> => {
-    await supabase.from('orders').update({ deleted: true }).eq('id', orderId);
-};
-
-export const updateOrderStatus = async (orderId: string, status: OrderStatus, notes?: string, completionData?: any, qcAttachmentUrl?: string): Promise<void> => {
-   const payload: any = { status, qc_notes: notes };
-   if (completionData) {
-       payload.completion_breakdown = completionData.completion_breakdown;
-       payload.actual_box_count = completionData.actual_box_count;
-   }
-   if (qcAttachmentUrl) payload.qc_attachment_url = qcAttachmentUrl;
-   await supabase.from('orders').update(payload).eq('id', orderId);
-   await addOrderLog(orderId, 'STATUS_CHANGE', `Status: ${status}${notes ? ` - ${notes}` : ''}`);
-};
-
-export const updateOrderDetails = async (orderId: string, updates: Partial<Order>): Promise<{ success: boolean; error: string | null }> => {
-    const payload: any = {};
-    const allowedKeys = ['style_number', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count'];
-    allowedKeys.forEach(k => { if ((updates as any)[k] !== undefined) payload[k] = (updates as any)[k]; });
-    const { error } = await supabase.from('orders').update(payload).eq('id', orderId);
-    if (error) return { success: false, error: error.message };
-    await addOrderLog(orderId, 'MANUAL_UPDATE', 'Order details revised by Admin.');
-    return { success: true, error: null };
 };
 
 export const fetchMaterialRequests = async (): Promise<MaterialRequest[]> => {
