@@ -48,12 +48,13 @@ export interface Unit {
 
 export interface SizeBreakdown {
   color: string;
-  s: number;
-  m: number;
-  l: number;
-  xl: number;
-  xxl: number;
-  xxxl: number;
+  s?: number;
+  m?: number;
+  l?: number;
+  xl?: number;
+  xxl?: number;
+  xxxl?: number;
+  [key: string]: any;
 }
 
 export interface Attachment {
@@ -98,6 +99,7 @@ export interface Order {
   status: OrderStatus;
   created_at?: string;
   size_format?: 'standard' | 'numeric';
+  size_sequence?: string[]; // Custom order of size labels
 }
 
 // --- Style Database Types ---
@@ -249,4 +251,40 @@ export const formatOrderNumber = (order: Partial<Order>): string => {
     ? order.style_number.split('-')[0].trim() 
     : 'STYLE';
   return `ORD-${stylePart}-${serial}`;
+};
+
+/**
+ * Normalizes size strings for consistency.
+ * 2XL -> XXL, 3XL -> XXXL, etc. Case-insensitive.
+ */
+export const normalizeSize = (size: string): string => {
+  const s = size.trim().toUpperCase();
+  if (s === '2XL') return 'XXL';
+  if (s === '3XL') return 'XXXL';
+  return s;
+};
+
+/**
+ * Returns the property key in SizeBreakdown for a given label
+ */
+export const getSizeKeyFromLabel = (label: string, format: 'standard' | 'numeric' = 'standard'): string => {
+  const norm = normalizeSize(label);
+  
+  if (format === 'numeric') {
+    const numericLabels = ['65', '70', '75', '80', '85', '90'];
+    const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'];
+    const idx = numericLabels.indexOf(norm);
+    return idx !== -1 ? keys[idx] : norm;
+  } else {
+    const standardLabels = ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+    const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'];
+    const idx = standardLabels.indexOf(norm);
+    if (idx !== -1) return keys[idx];
+    
+    // Check aliases
+    if (norm === '2XL') return 'xxl';
+    if (norm === 'XXXL') return 'xxxl';
+    
+    return norm;
+  }
 };

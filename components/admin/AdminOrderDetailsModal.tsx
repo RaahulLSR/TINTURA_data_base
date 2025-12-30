@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, Pencil, Trash2, Printer, Save, Loader2, Clock, Paperclip, Box, Image as ImageIcon, FileText, Download, ArrowLeftRight, Upload, BookOpen, Calculator, ExternalLink, RefreshCcw } from 'lucide-react';
-import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber, Style, StyleTemplate, ConsumptionType, DetailedRequirement } from '../../types';
+import { Order, Unit, OrderLog, SizeBreakdown, Attachment, OrderStatus, formatOrderNumber, Style, StyleTemplate, ConsumptionType, DetailedRequirement, normalizeSize, getSizeKeyFromLabel } from '../../types';
 import { fetchOrderLogs, updateOrderDetails, deleteOrder, triggerOrderEmail, uploadOrderAttachment, fetchStyleByNumber, fetchStyleTemplate, fetchStyles, calculateOrderForecast } from '../../services/db';
 
 interface AdminOrderDetailsModalProps {
@@ -35,9 +35,20 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     }
   }, [order.id, order.style_number]);
 
-  const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
+  const sizeLabels = editFormData.size_sequence && editFormData.size_sequence.length > 0 
+    ? editFormData.size_sequence 
+    : (useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL']);
+
+  const getRowTotal = (row: SizeBreakdown) => {
+    let total = 0;
+    sizeLabels.forEach(label => {
+      const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+      total += (row[key] || 0);
+    });
+    return total;
+  };
+
   const getTotalQuantity = (bd: SizeBreakdown[]) => bd.reduce((acc, row) => acc + getRowTotal(row), 0);
-  const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
 
   const handleStyleSelect = (styleId: string) => {
     setSelectedStyleId(styleId);
@@ -59,9 +70,10 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
       if (confirm("Would you like to reset the color breakdown based on the new style's colors? (Existing quantities will be lost)")) {
         const newBreakdown = style.available_colors
           .filter(c => c.trim() !== '')
-          .map(color => ({
-            color, s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0
-          }));
+          .map(color => {
+            const row: SizeBreakdown = { color };
+            return row;
+          });
         setEditFormData(prev => ({ ...prev, size_breakdown: newBreakdown }));
       }
     }
@@ -177,7 +189,7 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
             </div>
           `).join('')}
           <div class="footer">Document generated via Tintura SST MES. Estimates are for internal production planning only.</div>
-          <script>window.onload = () => { window.print(); };</script>
+          <script>window.print(); </script>
         </body></html>
       `);
       win.document.close();
@@ -257,10 +269,9 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
     }
 
     const formattedNo = formatOrderNumber(order);
-    const headers = useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
-    const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
+    const keys = sizeLabels.map(l => getSizeKeyFromLabel(l, useNumericSizes ? 'numeric' : 'standard'));
     const activeBreakdown = (isEditing ? editFormData.size_breakdown : order.size_breakdown) || [];
-    const breakdownRows = activeBreakdown.map(row => `<tr><td style="text-align:left; font-weight:bold; border: 1px solid #333;">${row.color}</td>${keys.map(k => `<td style="border: 1px solid #333;">${(row as any)[k]}</td>`).join('')}<td style="font-weight:bold; background:#f1f5f9; border: 1px solid #333;">${getRowTotal(row)}</td></tr>`).join('');
+    const breakdownRows = activeBreakdown.map(row => `<tr><td style="text-align:left; font-weight:bold; border: 1px solid #333;">${row.color}</td>${keys.map(k => `<td style="border: 1px solid #333;">${row[k] || 0}</td>`).join('')}<td style="font-weight:bold; background:#f1f5f9; border: 1px solid #333;">${getRowTotal(row)}</td></tr>`).join('');
 
     const activeAttachments = (isEditing ? editFormData.attachments : order.attachments) || [];
     const orderImgs = activeAttachments.filter(a => a.type === 'image');
@@ -293,7 +304,7 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
           </div>
           
           <div class="section-title">Color & Size Matrix</div>
-          <table><thead><tr><th style="text-align:left; border:1px solid #333;">Variant</th>${headers.map(h => `<th style="border:1px solid #333;">${h}</th>`).join('')}<th style="border:1px solid #333;">Total</th></tr></thead><tbody>${breakdownRows}</tbody></table>
+          <table><thead><tr><th style="text-align:left; border:1px solid #333;">Variant</th>${sizeLabels.map(l => `<th style="border:1px solid #333;">${l}</th>`).join('')}<th style="border:1px solid #333;">Total</th></tr></thead><tbody>${breakdownRows}</tbody></table>
           
           <div class="section-title">Manufacturing Notes</div>
           <div class="notes-box">${isEditing ? editFormData.description : order.description || 'No notes provided.'}</div>
@@ -309,7 +320,7 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
           <div style="page-break-before: auto;">
             ${techPackHtml}
           </div>
-          <script>window.onload = () => { setTimeout(() => window.print(), 1000); };</script>
+          <script>window.onload = () => { window.print(); };</script>
         </body></html>`);
         win.document.close();
     }
@@ -421,16 +432,16 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
               {isEditing && (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setUseNumericSizes(!useNumericSizes)} className="text-[10px] bg-slate-100 px-4 py-2 rounded-xl border border-slate-200 font-black uppercase"><ArrowLeftRight size={14} className="inline mr-2"/> Switch Size Format</button>
-                  <button type="button" onClick={() => setEditFormData({...editFormData, size_breakdown: [...(editFormData.size_breakdown || []), { color: '', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }]})} className="text-[10px] bg-indigo-600 text-white px-4 py-2 rounded-xl font-black uppercase hover:bg-indigo-700 transition-all">+ Add Color</button>
+                  <button type="button" onClick={() => setEditFormData({...editFormData, size_breakdown: [...(editFormData.size_breakdown || []), { color: '' }]})} className="text-[10px] bg-indigo-600 text-white px-4 py-2 rounded-xl font-black uppercase hover:bg-indigo-700 transition-all">+ Add Color</button>
                 </div>
               )}
             </div>
-            <div className="border border-slate-200 rounded-3xl overflow-hidden shadow-sm bg-white">
-              <table className="w-full text-center text-sm border-collapse">
+            <div className="border border-slate-200 rounded-3xl overflow-hidden shadow-sm bg-white overflow-x-auto">
+              <table className="w-full text-center text-sm border-collapse min-w-max">
                 <thead className="bg-slate-50 text-slate-500 font-black uppercase text-[10px] tracking-widest border-b">
                   <tr>
                     <th className="p-4 text-left border-r">Color Variant</th>
-                    {getHeaderLabels().map(h => <th key={h} className="p-4 border-r">{h}</th>)}
+                    {sizeLabels.map(h => <th key={h} className="p-4 border-r">{h}</th>)}
                     <th className="p-4 bg-slate-100">Sum</th>
                     {isEditing && <th className="p-4 w-12"></th>}
                   </tr>
@@ -438,18 +449,21 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
                 <tbody className="divide-y divide-slate-100">
                   {(isEditing ? editFormData.size_breakdown : order.size_breakdown)?.map((row, idx) => (
                     <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-4 text-left font-black text-slate-700 border-r">
+                      <td className="p-4 text-left font-black text-slate-700 border-r min-w-[150px]">
                         {isEditing ? (
                           <input className="w-full border rounded p-1 font-bold text-sm" value={row.color} onChange={e => { const bd = [...(editFormData.size_breakdown || [])]; bd[idx].color = e.target.value; setEditFormData({...editFormData, size_breakdown: bd}); }}/>
                         ) : row.color}
                       </td>
-                      {['s','m','l','xl','xxl','xxxl'].map(key => (
-                        <td key={key} className="p-4 border-r">
-                          {isEditing ? (
-                            <input type="number" className="w-16 border rounded p-1 text-center font-black" value={(row as any)[key]} onChange={e => { const bd = [...(editFormData.size_breakdown || [])]; (bd[idx] as any)[key] = parseInt(e.target.value) || 0; setEditFormData({...editFormData, size_breakdown: bd}); }}/>
-                          ) : (order.size_breakdown?.[idx]?.[key as keyof SizeBreakdown] || 0)}
-                        </td>
-                      ))}
+                      {sizeLabels.map(label => {
+                        const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+                        return (
+                          <td key={label} className="p-4 border-r w-20">
+                            {isEditing ? (
+                              <input type="number" className="w-16 border rounded p-1 text-center font-black" value={row[key] || ''} onChange={e => { const bd = [...(editFormData.size_breakdown || [])]; bd[idx][key] = parseInt(e.target.value) || 0; setEditFormData({...editFormData, size_breakdown: bd}); }}/>
+                            ) : (row[key] || 0)}
+                          </td>
+                        );
+                      })}
                       <td className="p-4 font-black text-slate-900 bg-slate-50/50 tabular-nums">{getRowTotal(row)}</td>
                       {isEditing && (
                         <td className="p-4">
@@ -532,7 +546,6 @@ export const AdminOrderDetailsModal: React.FC<AdminOrderDetailsModalProps> = ({ 
             </div>
           </div>
 
-          {/* GRANULAR REQUIREMENTS FORECAST SECTION - MOVED TO END */}
           {detailedReqs.length > 0 && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center gap-3">

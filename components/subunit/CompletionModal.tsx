@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Order, SizeBreakdown } from '../../types';
+import { Order, SizeBreakdown, getSizeKeyFromLabel } from '../../types';
 import { X, CheckCircle2, AlertTriangle, ArrowLeftRight } from 'lucide-react';
 
 interface CompletionModalProps {
@@ -8,7 +8,7 @@ interface CompletionModalProps {
   form: { breakdown: SizeBreakdown[]; actualBoxCount: number };
   useNumericSizes: boolean;
   onToggleSizeFormat: () => void;
-  onUpdateRow: (index: number, field: keyof SizeBreakdown, value: number) => void;
+  onUpdateRow: (index: number, field: string, value: number) => void;
   onUpdateBoxCount: (count: number) => void;
   onSubmit: (e: React.FormEvent) => void;
   onClose: () => void;
@@ -24,12 +24,22 @@ export const CompletionModal: React.FC<CompletionModalProps> = ({
   onSubmit,
   onClose
 }) => {
-  const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
-  const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
+  const sizeLabels = order.size_sequence && order.size_sequence.length > 0 
+    ? order.size_sequence 
+    : (useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL']);
+
+  const getRowTotal = (row: SizeBreakdown) => {
+    let total = 0;
+    sizeLabels.forEach(label => {
+      const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+      total += (row[key] || 0);
+    });
+    return total;
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[90vh] flex flex-col animate-scale-up">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden max-h-[90vh] flex flex-col animate-scale-up">
         <div className="p-6 border-b flex justify-between items-center bg-green-50">
           <h3 className="text-xl font-bold text-green-900 flex items-center gap-2">
             <CheckCircle2 /> Complete Order: {order.order_no}
@@ -69,11 +79,11 @@ export const CompletionModal: React.FC<CompletionModalProps> = ({
             </div>
             
             <div className="border rounded-lg overflow-hidden overflow-x-auto">
-              <table className="w-full text-center text-sm">
+              <table className="w-full text-center text-sm min-w-max">
                 <thead className="bg-slate-100 text-slate-600 font-semibold border-b">
                   <tr>
                     <th className="p-3 text-left">Color</th>
-                    {getHeaderLabels().map(h => <th key={h} className="p-3 w-20">{h}</th>)}
+                    {sizeLabels.map(h => <th key={h} className="p-3 w-20">{h}</th>)}
                     <th className="p-3 bg-slate-100">Row Total</th>
                   </tr>
                 </thead>
@@ -81,16 +91,19 @@ export const CompletionModal: React.FC<CompletionModalProps> = ({
                   {form.breakdown.map((row, idx) => (
                     <tr key={idx}>
                       <td className="p-3 text-left font-medium text-slate-700">{row.color}</td>
-                      {['s','m','l','xl','xxl','xxxl'].map(key => (
-                        <td key={key} className="p-2">
-                          <input 
-                            type="number" 
-                            className="w-16 border rounded p-1.5 text-center bg-white text-slate-900" 
-                            value={(row as any)[key]} 
-                            onChange={e => onUpdateRow(idx, key as keyof SizeBreakdown, parseInt(e.target.value) || 0)} 
-                          />
-                        </td>
-                      ))}
+                      {sizeLabels.map(label => {
+                        const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+                        return (
+                          <td key={label} className="p-2">
+                            <input 
+                              type="number" 
+                              className="w-16 border rounded p-1.5 text-center bg-white text-slate-900" 
+                              value={row[key] || ''} 
+                              onChange={e => onUpdateRow(idx, key, parseInt(e.target.value) || 0)} 
+                            />
+                          </td>
+                        );
+                      })}
                       <td className="p-3 font-bold bg-slate-50">{getRowTotal(row)}</td>
                     </tr>
                   ))}

@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, PlusCircle, ArrowLeftRight, Trash2, Upload, ImageIcon, Send, Loader2, BookOpen } from 'lucide-react';
-import { Unit, SizeBreakdown, Attachment, Style } from '../../types';
-import { createOrder, uploadOrderAttachment, triggerOrderEmail, fetchStyles } from '../../services/db';
+import { X, Plus, PlusCircle, ArrowLeftRight, Trash2, Upload, ImageIcon, Send, Loader2, BookOpen, ChevronUp, ChevronDown, Ruler } from 'lucide-react';
+import { Unit, SizeBreakdown, Attachment, Style, normalizeSize, getSizeKeyFromLabel } from '../../types';
+import { createOrder, uploadOrderAttachment, triggerOrderEmail, fetchStyles, upsertStyle } from '../../services/db';
 
 interface LaunchOrderModalProps {
   isOpen: boolean;
@@ -18,6 +18,11 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
   const [availableStyles, setAvailableStyles] = useState<Style[]>([]);
   const [selectedStyleId, setSelectedStyleId] = useState<string>('');
   const [newOrder, setNewOrder] = useState({ style_number: '', unit_id: 1, target_delivery_date: '', description: '', box_count: 0 });
+  
+  // Size Management
+  const [sizeSequence, setSizeSequence] = useState<string[]>(['S', 'M', 'L', 'XL', 'XXL', '3XL']);
+  const [newSizeName, setNewSizeName] = useState('');
+  
   const [breakdown, setBreakdown] = useState<SizeBreakdown[]>([{ color: '', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }]);
 
   useEffect(() => {
@@ -25,6 +30,15 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
       fetchStyles().then(setAvailableStyles);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    // Reset sequence when format changes unless we have custom ones
+    if (useNumericSizes) {
+       setSizeSequence(['65', '70', '75', '80', '85', '90']);
+    } else {
+       setSizeSequence(['S', 'M', 'L', 'XL', 'XXL', '3XL']);
+    }
+  }, [useNumericSizes]);
 
   if (!isOpen) return null;
 
@@ -36,27 +50,80 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
       return;
     }
     
-    // Autofill Logic: Reference = <style number> - <short description>
     setNewOrder({
       ...newOrder,
       style_number: `${style.style_number} - ${style.style_text}`
     });
     
-    setUseNumericSizes(style.size_type === 'number');
+    const isNum = style.size_type === 'number';
+    setUseNumericSizes(isNum);
+    
+    if (style.available_sizes && style.available_sizes.length > 0) {
+      setSizeSequence(style.available_sizes.map(s => normalizeSize(s)));
+    } else {
+      setSizeSequence(isNum ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL']);
+    }
     
     if (style.available_colors && style.available_colors.length > 0) {
       const newBreakdown = style.available_colors
         .filter(c => c.trim() !== '')
-        .map(color => ({
-          color, s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0
-        }));
+        .map(color => {
+          const row: SizeBreakdown = { color };
+          // Initialize slots based on size sequence
+          sizeSequence.forEach(label => {
+            const key = getSizeKeyFromLabel(label, isNum ? 'numeric' : 'standard');
+            row[key] = 0;
+          });
+          return row;
+        });
       if (newBreakdown.length > 0) setBreakdown(newBreakdown);
     }
   };
 
-  const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
+  const addCustomSize = () => {
+    const normalized = normalizeSize(newSizeName);
+    if (!normalized) return;
+    if (sizeSequence.map(s => normalizeSize(s)).includes(normalized)) {
+      alert("Size already exists in matrix.");
+      return;
+    }
+
+    setSizeSequence(prev => [...prev, normalized]);
+    
+    // Update breakdown to include new key if needed
+    setBreakdown(prev => prev.map(row => {
+       const key = getSizeKeyFromLabel(normalized, useNumericSizes ? 'numeric' : 'standard');
+       if (row[key] === undefined) return { ...row, [key]: 0 };
+       return row;
+    }));
+
+    setNewSizeName('');
+  };
+
+  const removeSize = (label: string) => {
+    if (sizeSequence.length <= 1) return;
+    if (!confirm(`Remove size ${label} from this order matrix?`)) return;
+    setSizeSequence(prev => prev.filter(s => s !== label));
+  };
+
+  const moveSize = (index: number, direction: 'up' | 'down') => {
+    const newSeq = [...sizeSequence];
+    const target = direction === 'up' ? index - 1 : index + 1;
+    if (target < 0 || target >= newSeq.length) return;
+    [newSeq[index], newSeq[target]] = [newSeq[target], newSeq[index]];
+    setSizeSequence(newSeq);
+  };
+
+  const getRowTotal = (row: SizeBreakdown) => {
+    let total = 0;
+    sizeSequence.forEach(label => {
+      const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+      total += (row[key] || 0);
+    });
+    return total;
+  };
+
   const getTotalQuantity = (bd: SizeBreakdown[]) => bd.reduce((acc, row) => acc + getRowTotal(row), 0);
-  const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +138,28 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
         if (url) attachments.push({ name: file.name, url, type: file.type.startsWith('image/') ? 'image' : 'document' });
       }
 
-      const { data, error } = await createOrder({ ...newOrder, quantity, size_breakdown: breakdown, attachments, size_format: useNumericSizes ? 'numeric' : 'standard' });
+      // If we added new sizes, check if we should update the linked style
+      if (selectedStyleId) {
+        const style = availableStyles.find(s => s.id === selectedStyleId);
+        if (style) {
+          const currentStyleSizes = (style.available_sizes || []).map(s => normalizeSize(s));
+          const hasNewSizes = sizeSequence.some(s => !currentStyleSizes.includes(s));
+          if (hasNewSizes) {
+            const updatedStyle = { ...style, available_sizes: Array.from(new Set([...currentStyleSizes, ...sizeSequence])) };
+            await upsertStyle(updatedStyle);
+          }
+        }
+      }
+
+      const { data, error } = await createOrder({ 
+        ...newOrder, 
+        quantity, 
+        size_breakdown: breakdown, 
+        attachments, 
+        size_format: useNumericSizes ? 'numeric' : 'standard',
+        size_sequence: sizeSequence
+      });
+
       if (data) {
         await triggerOrderEmail(data.id, false);
         onSuccess();
@@ -88,7 +176,7 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[95vh] animate-scale-up border border-slate-200">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[95vh] animate-scale-up border border-slate-200">
         <div className="p-6 border-b flex justify-between items-center bg-slate-50">
           <h3 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-3">
             <div className="p-2 bg-indigo-600 text-white rounded-lg shadow-lg"><Plus size={24}/></div>
@@ -98,7 +186,6 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
         </div>
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8">
           
-          {/* Style Selection Top Dropdown */}
           <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 flex flex-col md:flex-row items-center gap-6">
             <div className="flex items-center gap-3 shrink-0">
                <div className="p-3 bg-white rounded-xl text-indigo-600 shadow-sm border border-indigo-50">
@@ -129,20 +216,82 @@ export const LaunchOrderModal: React.FC<LaunchOrderModalProps> = ({ isOpen, onCl
             <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Planned Box Count</label><input required type="number" min="1" className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-black focus:ring-2 focus:ring-indigo-500 outline-none" value={newOrder.box_count} onChange={e => setNewOrder({...newOrder, box_count: parseInt(e.target.value) || 0})}/></div>
             <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Delivery Due</label><input required type="date" className="w-full border-2 border-slate-100 rounded-xl p-4 bg-white text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 outline-none" value={newOrder.target_delivery_date} onChange={e => setNewOrder({...newOrder, target_delivery_date: e.target.value})}/></div>
           </div>
+
+          {/* ADVANCED SIZE MANAGEMENT */}
+          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
+             <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                   <Ruler size={18} className="text-indigo-600"/>
+                   <h4 className="font-black text-slate-700 text-xs uppercase tracking-widest">Active Size Matrix Configuration</h4>
+                </div>
+                <button type="button" onClick={() => setUseNumericSizes(!useNumericSizes)} className="text-[10px] font-black bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm uppercase tracking-widest transition-all hover:bg-slate-50">
+                  <ArrowLeftRight size={14} className="inline mr-2"/> Switch to {useNumericSizes ? 'Lettered' : 'Numeric'}
+                </button>
+             </div>
+             
+             <div className="flex flex-wrap gap-3 items-end">
+                {sizeSequence.map((label, idx) => (
+                  <div key={idx} className="group relative bg-white border border-slate-200 p-2 rounded-xl shadow-sm flex flex-col items-center min-w-[70px]">
+                    <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10">
+                       <button type="button" onClick={() => moveSize(idx, 'up')} className="bg-white border p-1 rounded hover:bg-indigo-50 text-indigo-600"><ChevronUp size={10}/></button>
+                       <button type="button" onClick={() => moveSize(idx, 'down')} className="bg-white border p-1 rounded hover:bg-indigo-50 text-indigo-600"><ChevronDown size={10}/></button>
+                       <button type="button" onClick={() => removeSize(label)} className="bg-white border p-1 rounded hover:bg-red-50 text-red-600"><X size={10}/></button>
+                    </div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">POS {idx+1}</span>
+                    <span className="text-sm font-black text-indigo-700 uppercase">{label}</span>
+                  </div>
+                ))}
+                
+                <div className="flex gap-2 bg-white p-2 rounded-xl border border-indigo-200 shadow-sm">
+                   <input 
+                      type="text" 
+                      placeholder="Add Size (e.g. XXL)" 
+                      className="w-32 border-none bg-transparent text-sm font-bold focus:ring-0 outline-none uppercase"
+                      value={newSizeName}
+                      onChange={e => setNewSizeName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCustomSize())}
+                   />
+                   <button type="button" onClick={addCustomSize} className="bg-indigo-600 text-white p-1.5 rounded-lg hover:bg-indigo-700 transition-colors">
+                      <Plus size={16}/>
+                   </button>
+                </div>
+             </div>
+             <p className="text-[9px] font-bold text-slate-400 italic">Normalization rules: 2XL auto-mapped to XXL, 3XL to XXXL. Case-insensitive inputs.</p>
+          </div>
+
           <div>
-            <div className="flex justify-between items-center mb-4"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Color & Size Matrix</label><button type="button" onClick={() => setUseNumericSizes(!useNumericSizes)} className="text-[10px] font-black bg-indigo-50 text-indigo-600 px-5 py-2 rounded-xl border border-indigo-100 uppercase tracking-widest transition-all"><ArrowLeftRight size={14} className="inline mr-2"/> Format: {useNumericSizes ? '65-90' : 'S-3XL'}</button></div>
-            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-lg">
-              <table className="w-full text-center text-sm border-collapse">
-                <thead className="bg-slate-50 text-slate-400 font-black uppercase text-[10px] tracking-widest border-b"><tr><th className="p-4 text-left border-r">Color Variant</th>{getHeaderLabels().map(h => <th key={h} className="p-4 border-r">{h}</th>)}<th className="p-4 bg-slate-100">Row Sum</th><th className="p-4 w-12"></th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{breakdown.map((row, idx) => (
+            <div className="flex justify-between items-center mb-4"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Order Volume Matrix</label></div>
+            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-lg overflow-x-auto">
+              <table className="w-full text-center text-sm border-collapse min-w-max">
+                <thead className="bg-slate-50 text-slate-400 font-black uppercase text-[10px] tracking-widest border-b">
+                  <tr>
+                    <th className="p-4 text-left border-r">Color Variant</th>
+                    {sizeSequence.map(label => <th key={label} className="p-4 border-r">{label}</th>)}
+                    <th className="p-4 bg-slate-100">Row Sum</th>
+                    <th className="p-4 w-12"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {breakdown.map((row, idx) => (
                   <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-3 border-r"><input placeholder="e.g. Navy" className="w-full border-2 border-slate-50 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-indigo-500 font-bold outline-none" value={row.color} onChange={e => { const nb = [...breakdown]; nb[idx].color = e.target.value; setBreakdown(nb); }}/></td>
-                    {['s','m','l','xl','xxl','xxxl'].map(sz => (<td key={sz} className="p-3 border-r"><input type="number" className="w-full border-2 border-slate-50 rounded-xl px-2 py-3 text-center bg-white focus:ring-2 focus:ring-indigo-500 font-black outline-none" value={(row as any)[sz] || ''} onChange={e => { const nb = [...breakdown]; (nb[idx] as any)[sz] = parseInt(e.target.value) || 0; setBreakdown(nb); }}/></td>))}
+                    <td className="p-3 border-r min-w-[150px]"><input placeholder="e.g. Navy" className="w-full border-2 border-slate-50 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-indigo-500 font-bold outline-none" value={row.color} onChange={e => { const nb = [...breakdown]; nb[idx].color = e.target.value; setBreakdown(nb); }}/></td>
+                    {sizeSequence.map(label => {
+                      const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+                      return (
+                        <td key={label} className="p-3 border-r w-20">
+                          <input type="number" className="w-full border-2 border-slate-50 rounded-xl px-2 py-3 text-center bg-white focus:ring-2 focus:ring-indigo-500 font-black outline-none" value={row[key] || ''} onChange={e => { const nb = [...breakdown]; nb[idx][key] = parseInt(e.target.value) || 0; setBreakdown(nb); }}/>
+                        </td>
+                      );
+                    })}
                     <td className="p-3 font-black text-indigo-700 bg-slate-50/50 tabular-nums text-lg">{getRowTotal(row)}</td>
                     <td className="p-3">{breakdown.length > 1 && <button type="button" onClick={() => setBreakdown(breakdown.filter((_, i) => i !== idx))} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={20}/></button>}</td>
                   </tr>))}
                 </tbody></table>
-              <button type="button" onClick={() => setBreakdown([...breakdown, { color: '', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }])} className="w-full py-5 text-[10px] font-black text-indigo-600 hover:bg-indigo-50 border-t border-slate-100 transition-colors bg-slate-50/20 uppercase tracking-widest flex items-center justify-center gap-2"><PlusCircle size={16}/> Add New Color Variant</button>
+              <button type="button" onClick={() => {
+                const newRow: SizeBreakdown = { color: '' };
+                sizeSequence.forEach(l => { newRow[getSizeKeyFromLabel(l, useNumericSizes ? 'numeric' : 'standard')] = 0; });
+                setBreakdown([...breakdown, newRow]);
+              }} className="w-full py-5 text-[10px] font-black text-indigo-600 hover:bg-indigo-50 border-t border-slate-100 transition-colors bg-slate-50/20 uppercase tracking-widest flex items-center justify-center gap-2"><PlusCircle size={16}/> Add New Color Variant</button>
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

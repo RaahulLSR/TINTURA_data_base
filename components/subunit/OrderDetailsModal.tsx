@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Order, OrderStatus, SizeBreakdown, Style, ConsumptionType, Attachment } from '../../types';
+import { Order, OrderStatus, SizeBreakdown, Style, ConsumptionType, Attachment, normalizeSize, getSizeKeyFromLabel } from '../../types';
 import { X, ImageIcon, FileText, Download, Paperclip, Printer, Box, Calculator } from 'lucide-react';
 import { fetchStyleByNumber } from '../../services/db';
 
@@ -43,8 +43,18 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     }
   }, [order.style_number]);
 
-  const getHeaderLabels = () => useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
-  const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
+  const sizeLabels = order.size_sequence && order.size_sequence.length > 0 
+    ? order.size_sequence 
+    : (useNumericSizes ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL']);
+
+  const getRowTotal = (row: SizeBreakdown) => {
+    let total = 0;
+    sizeLabels.forEach(label => {
+      const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+      total += (row[key] || 0);
+    });
+    return total;
+  };
 
   const calculateRequirementValue = (qty: number, type: ConsumptionType, val: number) => {
     if (!val) return 0;
@@ -55,8 +65,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     if (!linkedStyle || !order.size_breakdown) return [];
     
     const detailedReqs: DetailedRequirement[] = [];
-    const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
-    const sizeLabels = getHeaderLabels();
+    const format = order.size_format || 'standard';
 
     for (const catName in linkedStyle.tech_pack) {
       for (const fieldName in linkedStyle.tech_pack[catName]) {
@@ -70,8 +79,17 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
 
             if (variant.sizeVariants) {
               for (const sv of variant.sizeVariants) {
-                const targetKeys = sizeKeys.filter((_, i) => sv.sizes.includes(sizeLabels[i]));
-                const qty = matchingRows.reduce((sum, row) => sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0), 0);
+                const svLabels = sv.sizes.map(s => normalizeSize(s));
+                const qty = matchingRows.reduce((sum, row) => {
+                  let rowSum = 0;
+                  sizeLabels.forEach(label => {
+                    if (svLabels.includes(normalizeSize(label))) {
+                      const key = getSizeKeyFromLabel(label, format);
+                      rowSum += (row[key] || 0);
+                    }
+                  });
+                  return sum + rowSum;
+                }, 0);
                 
                 if (qty > 0) {
                   const rType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
@@ -122,16 +140,17 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     return detailedReqs;
   };
 
-  const renderDetailCell = (rowIdx: number, sizeKey: keyof SizeBreakdown) => {
+  const renderDetailCell = (rowIdx: number, label: string) => {
     const plannedRow = order.size_breakdown?.[rowIdx];
     const actualRow = order.completion_breakdown?.[rowIdx];
-    const plannedVal = plannedRow ? (plannedRow[sizeKey] as number) : 0;
+    const key = getSizeKeyFromLabel(label, useNumericSizes ? 'numeric' : 'standard');
+    const plannedVal = plannedRow ? (plannedRow[key] || 0) : 0;
 
     if (order.status !== OrderStatus.COMPLETED || !actualRow) {
       return <span className="text-slate-600 font-medium">{plannedVal}</span>;
     }
 
-    const actualVal = actualRow[sizeKey] as number;
+    const actualVal = actualRow[key] || 0;
     const isMismatch = actualVal !== plannedVal;
 
     return (
@@ -180,7 +199,6 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
             )}
           </div>
 
-          {/* DETAILED REQUIREMENTS SECTION */}
           {detailedReqs.length > 0 && (
             <div className="space-y-4 animate-fade-in">
               <div className="p-4 bg-indigo-600 text-white rounded-t-2xl flex items-center justify-between">
@@ -227,12 +245,12 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                 {order.status === OrderStatus.COMPLETED && <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full ml-3 border border-indigo-100 uppercase tracking-widest">Actual / Planned</span>}
               </h4>
             </div>
-            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-md">
-              <table className="w-full text-center text-sm border-collapse">
+            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-md overflow-x-auto">
+              <table className="w-full text-center text-sm border-collapse min-w-max">
                 <thead className="bg-slate-50 text-slate-500 font-black uppercase text-[10px] tracking-widest border-b">
                   <tr>
                     <th className="p-4 text-left border-r">Color Variant</th>
-                    {getHeaderLabels().map(h => <th key={h} className="p-4 border-r">{h}</th>)}
+                    {sizeLabels.map(h => <th key={h} className="p-4 border-r">{h}</th>)}
                     <th className="p-4 font-black bg-slate-100">Row Total</th>
                   </tr>
                 </thead>
@@ -240,12 +258,9 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                   {order.size_breakdown?.map((row, idx) => (
                     <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
                       <td className="p-4 text-left font-black text-slate-700 border-r">{row.color}</td>
-                      <td className="p-4 border-r">{renderDetailCell(idx, 's')}</td>
-                      <td className="p-4 border-r">{renderDetailCell(idx, 'm')}</td>
-                      <td className="p-4 border-r">{renderDetailCell(idx, 'l')}</td>
-                      <td className="p-4 border-r">{renderDetailCell(idx, 'xl')}</td>
-                      <td className="p-4 border-r">{renderDetailCell(idx, 'xxl')}</td>
-                      <td className="p-4 border-r">{renderDetailCell(idx, 'xxxl')}</td>
+                      {sizeLabels.map(label => (
+                         <td key={label} className="p-4 border-r">{renderDetailCell(idx, label)}</td>
+                      ))}
                       <td className="p-4 font-black bg-slate-50/50 text-slate-800 tabular-nums">{getRowTotal(row)}</td>
                     </tr>
                   ))}

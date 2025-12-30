@@ -3,7 +3,7 @@ import { supabase } from './supabase';
 // Export supabase for centralized access in components like AdminDashboard
 export { supabase };
 // Added formatOrderNumber to the imports from types
-import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog, Attachment, Style, StyleTemplate, BulkEditHistory, formatOrderNumber, DetailedRequirement, ConsumptionType } from '../types';
+import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog, Attachment, Style, StyleTemplate, BulkEditHistory, formatOrderNumber, DetailedRequirement, ConsumptionType, getSizeKeyFromLabel, normalizeSize } from '../types';
 
 const API_BASE = (typeof window !== 'undefined' && (window.location.protocol === 'file:' || window.location.hostname === 'localhost'))
   ? 'https://tintura-mail.vercel.app'
@@ -14,10 +14,13 @@ export const calculateOrderForecast = (order: Order, style: Style): DetailedRequ
   if (!style || !order.size_breakdown) return [];
   
   const detailedReqs: DetailedRequirement[] = [];
-  const sizeKeys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
-  const sizeLabels = order.size_format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+  const format = order.size_format || 'standard';
+  
+  // Use the sequence provided in the order, or default to standard slots
+  const sizeLabels = order.size_sequence && order.size_sequence.length > 0 
+    ? order.size_sequence 
+    : (format === 'numeric' ? ['65', '70', '75', '80', '85', '90'] : ['S', 'M', 'L', 'XL', 'XXL', '3XL']);
 
-  const getRowTotal = (row: SizeBreakdown) => (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
   const calculateVal = (qty: number, type: ConsumptionType, val: number) => !val ? 0 : (type === 'items_per_pc' ? qty * val : qty / val);
 
   for (const catName in style.tech_pack) {
@@ -32,8 +35,18 @@ export const calculateOrderForecast = (order: Order, style: Style): DetailedRequ
 
           if (variant.sizeVariants) {
             for (const sv of variant.sizeVariants) {
-              const targetKeys = sizeKeys.filter((_, i) => sv.sizes.includes(sizeLabels[i]));
-              const qty = matchingRows.reduce((sum, row) => sum + targetKeys.reduce((s, k) => s + (row[k] || 0), 0), 0);
+              const svLabels = sv.sizes.map(s => normalizeSize(s));
+              
+              const qty = matchingRows.reduce((sum, row) => {
+                let rowSum = 0;
+                sizeLabels.forEach(label => {
+                  if (svLabels.includes(normalizeSize(label))) {
+                    const key = getSizeKeyFromLabel(label, format);
+                    rowSum += (row[key] || 0);
+                  }
+                });
+                return sum + rowSum;
+              }, 0);
               
               if (qty > 0) {
                 const rType = sv.consumption_type || variant.consumption_type || item.consumption_type || 'items_per_pc';
@@ -51,7 +64,14 @@ export const calculateOrderForecast = (order: Order, style: Style): DetailedRequ
               }
             }
           } else if (variant.consumption_type) {
-            const qty = matchingRows.reduce((sum, row) => sum + getRowTotal(row), 0);
+            const qty = matchingRows.reduce((sum, row) => {
+               let rowTotal = 0;
+               sizeLabels.forEach(label => {
+                 const key = getSizeKeyFromLabel(label, format);
+                 rowTotal += (row[key] || 0);
+               });
+               return sum + rowTotal;
+            }, 0);
             const calc = calculateVal(qty, variant.consumption_type, variant.consumption_val || 0);
             req.breakdown.push({
               label: `Color: ${variant.colors.join('/')}`,
@@ -216,7 +236,7 @@ export const updateOrderDetails = async (orderId: string, updates: Partial<Order
     if (original) await recordOrderEditHistory(`Individual Update: ${formatOrderNumber(original)}`, [original]);
 
     const payload: any = {};
-    const allowedKeys = ['style_number', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count', 'material_forecast'];
+    const allowedKeys = ['style_number', 'unit_id', 'quantity', 'description', 'target_delivery_date', 'size_breakdown', 'size_format', 'attachments', 'box_count', 'material_forecast', 'size_sequence'];
     allowedKeys.forEach(k => { if ((updates as any)[k] !== undefined) payload[k] = (updates as any)[k]; });
     const { error } = await supabase.from('orders').update(payload).eq('id', orderId);
     if (error) return { success: false, error: error.message };
@@ -239,7 +259,7 @@ export const createOrder = async (order: Partial<Order>): Promise<{ data: Order 
         status: OrderStatus.ASSIGNED,
         deleted: false
     };
-    const optionalKeys: (keyof Order)[] = ['box_count', 'size_format', 'attachments'];
+    const optionalKeys: (keyof Order)[] = ['box_count', 'size_format', 'attachments', 'size_sequence'];
     optionalKeys.forEach(key => { if (order[key] !== undefined) payload[key] = order[key]; });
     const { data, error } = await supabase.from('orders').insert([payload]).select().single();
     if (error) return { data: null, error: error.message };
