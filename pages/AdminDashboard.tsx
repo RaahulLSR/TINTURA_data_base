@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, fetchUnits, fetchBarcodes, triggerOrderEmail, fetchOrderLogs, recordOrderEditHistory, supabase, syncAllOrdersWithStyles } from '../services/db';
+import { fetchOrders, fetchUnits, fetchBarcodes, triggerOrderEmail, fetchOrderLogs, recordOrderEditHistory, supabase } from '../services/db';
 import { Order, Unit, OrderStatus, BarcodeStatus, formatOrderNumber, OrderLog } from '../types';
-import { BarChart3, PieChart, PlusCircle, ClipboardList, Printer, Loader2, CheckSquare, Square, History, Factory, Calendar, RefreshCcw, X, Calculator } from 'lucide-react';
+import { BarChart3, PieChart, PlusCircle, ClipboardList, Printer, Loader2, CheckSquare, Square, History, Factory, Calendar, RefreshCcw, X } from 'lucide-react';
 import { DashboardStats } from '../components/admin/DashboardStats';
 import { MasterOrderList } from '../components/admin/MasterOrderList';
 import { LaunchOrderModal } from '../components/admin/LaunchOrderModal';
@@ -22,9 +22,6 @@ export const AdminDashboard: React.FC = () => {
   const [reportLoading, setReportLoading] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
-  // Sync State
-  const [isSyncing, setIsSyncing] = useState(false);
-
   // Bulk Edit States
   const [isBulkMode, setIsBulkMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
@@ -43,21 +40,6 @@ export const AdminDashboard: React.FC = () => {
   };
 
   useEffect(() => { loadData(); }, [activeTab]);
-
-  const handleGlobalSync = async () => {
-    if (!confirm("This will recalculate material forecasts for ALL orders based on current Style DB blueprints. Continue?")) return;
-    
-    setIsSyncing(true);
-    try {
-      const result = await syncAllOrdersWithStyles();
-      alert(`Master Sync Complete!\n${result.updated} orders were recalculated and updated from the Style Database.`);
-      loadData();
-    } catch (err: any) {
-      alert("Sync failed: " + err.message);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   const handleSendEmail = async (orderId: string) => {
     setEmailLoading(orderId);
@@ -140,7 +122,7 @@ export const AdminDashboard: React.FC = () => {
           const order = inProgressOrders.find(o => o.id === orderId);
           const orderRef = order ? formatOrderNumber(order) : 'UNK';
           return `
-            <div style="margin-bottom: 20px; border: 1.5px solid #1e293b; border-radius: 8px; overflow: hidden; page-break-inside: avoid;">
+            <div style="margin-bottom: 20px; border: 1.5 solid #1e293b; border-radius: 8px; overflow: hidden; page-break-inside: avoid;">
               <div style="background: #1e293b; padding: 10px 15px; font-weight: 900; color: #fff; font-size: 13px; text-transform: uppercase;">Job Ref: ${orderRef}</div>
               <table style="width: 100%; border-collapse: collapse; background: #fff;">
                 <tbody style="font-size: 11px;">
@@ -187,15 +169,6 @@ export const AdminDashboard: React.FC = () => {
             </div>
             {activeTab === 'overview' && (
                 <div className="flex gap-2">
-                  <button 
-                    onClick={handleGlobalSync} 
-                    disabled={isSyncing}
-                    className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-orange-600 rounded-xl transition-all flex items-center gap-2 font-bold text-xs shadow-sm active:scale-95 disabled:opacity-50" 
-                    title="Recalculate All Forecasts"
-                  >
-                    {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <Calculator size={18} className="text-orange-500"/>}
-                    <span>Global Sync</span>
-                  </button>
                   <button onClick={() => setIsHistoryOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all" title="Distribution History"><History size={20}/></button>
                   <button onClick={() => { setIsBulkMode(!isBulkMode); setSelectedOrderIds([]); }} className={`p-3 border rounded-xl font-bold text-sm flex items-center gap-2 transition-all ${isBulkMode ? 'bg-orange-600 text-white border-orange-600 shadow-lg' : 'bg-white border-slate-200 text-slate-500 hover:text-orange-600'}`}><CheckSquare size={20}/> {isBulkMode ? 'Exit Bulk' : 'Bulk Edit'}</button>
                   <button onClick={handlePrintUnitReport} disabled={reportLoading} className="bg-white border-2 border-indigo-600 text-indigo-600 px-5 py-3 rounded-xl flex items-center gap-2 hover:bg-indigo-50 shadow-md transition-all active:scale-95 disabled:opacity-50">{reportLoading ? <Loader2 size={20} className="animate-spin" /> : <ClipboardList size={20} />}<span>Unit Report</span></button>

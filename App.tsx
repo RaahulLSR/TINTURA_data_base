@@ -62,7 +62,7 @@ const AppRoutes = () => {
             } />
             
             <Route path="/materials" element={
-                <ProtectedRoute allowedRoles={[UserRole.MATERIALS, UserRole.ADMIN]}>
+                <ProtectedRoute allowedRoles={[UserRole.MATERIALS, UserRole.ADMIN, UserRole.SUB_UNIT]}>
                     <MaterialsDashboard />
                 </ProtectedRoute>
             } />

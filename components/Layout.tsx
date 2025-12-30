@@ -103,7 +103,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const navItems = allNavItems.filter(item => {
     if (user.role === UserRole.ADMIN) return true;
     if (user.role === UserRole.INVENTORY) return item.role === UserRole.INVENTORY || item.role === UserRole.SALES;
-    if (user.role === UserRole.SUB_UNIT) return item.role === UserRole.SUB_UNIT || item.role === UserRole.INVENTORY || item.role === UserRole.SALES || item.to === '/styles';
+    if (user.role === UserRole.SUB_UNIT) return item.role === UserRole.SUB_UNIT || item.role === UserRole.INVENTORY || item.role === UserRole.SALES || item.to === '/styles' || item.to === '/materials';
     return item.role === user.role;
   });
 

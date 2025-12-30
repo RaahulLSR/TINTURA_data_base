@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchStyles, upsertStyle, fetchStyleTemplate, deleteStyle, uploadOrderAttachment, fetchOrders, recordBulkEditHistory } from '../services/db';
+import { fetchStyles, upsertStyle, fetchStyleTemplate, deleteStyle, uploadOrderAttachment, fetchOrders, recordBulkEditHistory, syncAllOrdersWithStyles } from '../services/db';
 import { Style, StyleTemplate, Attachment, TechPackItem, ConsumptionType, Order } from '../types';
 import { 
-  Plus, Search, Grid, Copy, Trash2, Settings, ArrowLeftRight, CheckSquare, Square, FileUp, Table, BookOpen, ChevronRight, Edit3, Printer, X, FileSpreadsheet, History
+  Plus, Search, Grid, Copy, Trash2, Settings, ArrowLeftRight, CheckSquare, Square, FileUp, Table, BookOpen, ChevronRight, Edit3, Printer, X, FileSpreadsheet, History, Calculator, Loader2
 } from 'lucide-react';
 
 // Imported modular components
@@ -32,6 +32,9 @@ export const StyleDatabase: React.FC = () => {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<{ category?: string, field?: string } | null>(null);
   
+  // Sync State
+  const [isSyncing, setIsSyncing] = useState(false);
+
   // Bulk Mode States
   const [isBulkMode, setIsBulkMode] = useState(false);
   const [selectedStyleIds, setSelectedStyleIds] = useState<string[]>([]);
@@ -77,6 +80,21 @@ export const StyleDatabase: React.FC = () => {
   };
 
   useEffect(() => { loadData(); }, []);
+
+  const handleGlobalSync = async () => {
+    if (!confirm("This will recalculate material forecasts for ALL existing orders based on current blueprints in the Style Database. This ensures consistency after tech-pack changes. Continue?")) return;
+    
+    setIsSyncing(true);
+    try {
+      const result = await syncAllOrdersWithStyles();
+      alert(`Master Sync Complete!\n${result.updated} orders were recalculated and updated from the Style Database.`);
+      loadData();
+    } catch (err: any) {
+      alert("Sync failed: " + err.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const filteredStyles = styles.filter(s => 
     s.style_number.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -540,6 +558,16 @@ export const StyleDatabase: React.FC = () => {
             <button onClick={() => setViewMode('compare')} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'compare' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><ArrowLeftRight size={18}/> Compare</button>
           </div>
           <div className="h-8 w-px bg-slate-200 mx-2"></div>
+
+          <button 
+            onClick={handleGlobalSync} 
+            disabled={isSyncing}
+            className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-orange-600 rounded-xl transition-all flex items-center gap-2 font-bold text-sm shadow-sm active:scale-95 disabled:opacity-50" 
+            title="Recalculate All Forecasts Across Orders"
+          >
+            {isSyncing ? <Loader2 size={20} className="animate-spin" /> : <Calculator size={20} className="text-orange-500"/>}
+            <span>Sync All Forecasts</span>
+          </button>
 
           <button onClick={() => setIsHistoryOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 rounded-xl transition-all flex items-center gap-2 font-bold text-sm" title="Technical Audit Logs"><History size={20}/> History</button>
           <button onClick={() => setIsBulkAttributeUpdateOpen(true)} className="p-3 bg-white border border-slate-200 text-slate-500 hover:text-green-600 hover:border-green-500 rounded-xl transition-all flex items-center gap-2 font-bold text-sm" title="Sync Specific Values via CSV"><FileSpreadsheet size={20}/> Sync Values (CSV)</button>
